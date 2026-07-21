@@ -19,6 +19,10 @@ def generate_launch_description():
                 'control_rate_hz': 50.0,
                 'topic_cmd': '/motor_cmd',
                 'invert_direction': False,
+                'soft_start_stop': True,
+                'soft_start_stop_rate_per_s': 0.1,
+                'debug_ramp': False,
+                'debug_ramp_period_s': 0.5,
             }],
         )
     ])

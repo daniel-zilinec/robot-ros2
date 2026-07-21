@@ -37,6 +37,10 @@ class Dri0042MotorNode(Node):
         self.declare_parameter('control_rate_hz', 50.0)
         self.declare_parameter('topic_cmd', '/motor_cmd')
         self.declare_parameter('invert_direction', False)
+        self.declare_parameter('soft_start_stop', True)
+        self.declare_parameter('soft_start_stop_rate_per_s', 0.1)
+        self.declare_parameter('debug_ramp', False)
+        self.declare_parameter('debug_ramp_period_s', 0.5)
 
         if lgpio is None:
             self.get_logger().error(
@@ -53,7 +57,19 @@ class Dri0042MotorNode(Node):
         self.control_rate_hz = float(self.get_parameter('control_rate_hz').value)
         self.topic_cmd = str(self.get_parameter('topic_cmd').value)
         self.invert_direction = bool(self.get_parameter('invert_direction').value)
+        self.soft_start_stop = bool(self.get_parameter('soft_start_stop').value)
+        self.soft_start_stop_rate_per_s = max(
+            0.01,
+            float(self.get_parameter('soft_start_stop_rate_per_s').value),
+        )
+        self.debug_ramp = bool(self.get_parameter('debug_ramp').value)
+        self.debug_ramp_period_s = max(
+            0.05,
+            float(self.get_parameter('debug_ramp_period_s').value),
+        )
         self._pwm_failed = False
+        self._applied_cmd = 0.0
+        self._last_ramp_debug_log_s = 0.0
 
         self._chip_handle, self._chip_index_in_use = self._open_gpiochip(self.gpio_chip)
         try:
@@ -79,7 +95,7 @@ class Dri0042MotorNode(Node):
         self._timer = self.create_timer(1.0 / self.control_rate_hz, self._on_timer)
 
         self.get_logger().info(
-            'DRI0042 motor node ready: cmd=%s, chip=%s (idx=%d), PWM pin=%d, IN1=%d, IN2=%d'
+            'DRI0042 motor node ready: cmd=%s, chip=%s (idx=%d), PWM pin=%d, IN1=%d, IN2=%d, ramp=%s rate=%.3f/s step=%.5f/tick debug=%s'
             % (
                 self.topic_cmd,
                 self.gpio_chip,
@@ -87,6 +103,10 @@ class Dri0042MotorNode(Node):
                 self.pin_pwm,
                 self.pin_in1,
                 self.pin_in2,
+                self.soft_start_stop,
+                self.soft_start_stop_rate_per_s,
+                self.soft_start_stop_rate_per_s / self.control_rate_hz,
+                self.debug_ramp,
             )
         )
 
@@ -136,22 +156,24 @@ class Dri0042MotorNode(Node):
             return
         self._cmd.value = val
         self._cmd.last_rx_s = self._now_s()
+        if self.debug_ramp:
+            self.get_logger().info('motor_cmd rx: target=%.3f' % val)
 
     def _on_timer(self) -> None:
         age_s = self._now_s() - self._cmd.last_rx_s
-        if age_s > self.watchdog_timeout_s:
-            self._apply_output(0.0)
-            return
-        self._apply_output(self._cmd.value)
+        target_cmd = 0.0 if age_s > self.watchdog_timeout_s else self._cmd.value
+        self._apply_output(target_cmd)
 
     def _apply_output(self, cmd: float) -> None:
         if self._chip_handle is None or not self._gpio_claimed:
             return
-        if abs(cmd) < 1e-4:
+        ramped_cmd = self._slew_command(cmd)
+        if abs(ramped_cmd) < 1e-4:
+            self._applied_cmd = 0.0
             self._coast()
             return
 
-        forward = cmd > 0.0
+        forward = ramped_cmd > 0.0
         if self.invert_direction:
             forward = not forward
 
@@ -162,8 +184,34 @@ class Dri0042MotorNode(Node):
             lgpio.gpio_write(self._chip_handle, self.pin_in1, 0)
             lgpio.gpio_write(self._chip_handle, self.pin_in2, 1)
 
-        duty_pct = max(0.0, min(100.0, abs(cmd) * 100.0))
+        duty_pct = max(0.0, min(100.0, abs(ramped_cmd) * 100.0))
+        self._maybe_log_ramp(cmd, ramped_cmd, duty_pct)
         self._set_pwm(duty_pct)
+
+    def _maybe_log_ramp(self, target_cmd: float, ramped_cmd: float, duty_pct: float) -> None:
+        if not self.debug_ramp:
+            return
+        now_s = self._now_s()
+        if (now_s - self._last_ramp_debug_log_s) < self.debug_ramp_period_s:
+            return
+        self._last_ramp_debug_log_s = now_s
+        self.get_logger().info(
+            'ramp: target=%.3f applied=%.3f duty=%.1f%%'
+            % (target_cmd, ramped_cmd, duty_pct)
+        )
+
+    def _slew_command(self, target_cmd: float) -> float:
+        if not self.soft_start_stop:
+            self._applied_cmd = target_cmd
+            return self._applied_cmd
+
+        max_delta = self.soft_start_stop_rate_per_s / self.control_rate_hz
+        delta = target_cmd - self._applied_cmd
+        if abs(delta) <= max_delta:
+            self._applied_cmd = target_cmd
+        else:
+            self._applied_cmd += max_delta if delta > 0.0 else -max_delta
+        return self._applied_cmd
 
     def _set_pwm(self, duty_pct: float) -> None:
         if self._chip_handle is None or not self._gpio_claimed or self._pwm_failed:

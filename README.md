@@ -59,3 +59,13 @@ ros2 topic pub /motor_cmd std_msgs/msg/Float32 "{data: 0.0}" --once
 
 The node has a 2 second watchdog, so if commands stop arriving it will coast the
 motor automatically.
+
+Soft start/stop is enabled by default and is controlled per motor instance with
+these parameters:
+
+* `soft_start_stop` = `true` or `false`
+* `soft_start_stop_rate_per_s` = how fast the command can change, in normalized
+	command units per second
+
+That means you can enable it for steering and disable it for drive, or give each
+motor its own ramp rate.

@@ -113,11 +113,15 @@ cd ~/ros2_ws
 colcon build
 source install/setup.bash
 ```
+For faster Python package development use:
+```bash
+colcon build --symlink-install
+```
 
 Add the workspace overlay alias to your shell startup:
 
 ```
-alias rosws='source ~/ros2_ws/install/setup.bash'
+alias robot_ros='source ~/ros2_ws/install/setup.bash'
 ```
 
 Start the overlay in every new console
