@@ -133,7 +133,7 @@ rosws
 
 ```bash
 cd ~/ros2_ws
-ros2 launch src/my_lidar_bringup/launch/lidar_launch.py
+ros2 launch lidar lidar_launch.py
 ```
 
 This starts:
@@ -216,12 +216,12 @@ ros2_ws/
 ├── readme.md                          ← this file
 └── src/
     ├── sllidar_ros2/                  ← Slamtec driver (modified for Lyrical)
-    └── my_lidar_bringup/
+    ├── lidar/
         ├── package.xml
         ├── setup.py
         ├── setup.cfg
         ├── resource/
-        ├── my_lidar_bringup/
+        ├── lidar/
         │   ├── __init__.py
         │   └── py.typed
         ├── launch/
@@ -258,7 +258,7 @@ lidars before committing.
 
 ```bash
 # Launch everything
-ros2 launch src/my_lidar_bringup/launch/dual_lidar_launch.py
+ros2 launch robot_bringup robot_launch.py
 
 # Record
 ros2 bag record -a -o ~/lidar_recordings/my_recording

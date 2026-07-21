@@ -1,10 +1,9 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
+
 def generate_launch_description():
     return LaunchDescription([
-
-        # --- Static TF: base_link -> laser_c1 ---
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -16,8 +15,6 @@ def generate_launch_description():
                 '--child-frame-id', 'laser_c1'
             ]
         ),
-
-        # --- RPLIDAR C1 ---
         Node(
             package='sllidar_ros2',
             executable='sllidar_node',
