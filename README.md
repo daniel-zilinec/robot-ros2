@@ -13,7 +13,7 @@ ROS2 workspace for a robot with Ackermann steering
 ## Running The Robot
 
 Use the top-level bringup launch when you want the full robot stack. It starts the
-lidar and motor driver together:
+lidar and drive motor together:
 
 ```bash
 cd /home/dano/robot-ros2
@@ -27,6 +27,18 @@ You can disable one subsystem while debugging:
 ```bash
 ros2 launch robot_bringup robot_launch.py enable_motor:=false
 ros2 launch robot_bringup robot_launch.py enable_lidar:=false
+```
+
+To start steering motor as a second motor instance:
+
+```bash
+ros2 launch robot_bringup robot_launch.py enable_steering_motor:=true
+```
+
+To run steering motor only:
+
+```bash
+ros2 launch robot_bringup robot_launch.py enable_lidar:=false enable_motor:=false enable_steering_motor:=true
 ```
 
 ## Manual Motor Control
@@ -69,3 +81,33 @@ these parameters:
 
 That means you can enable it for steering and disable it for drive, or give each
 motor its own ramp rate.
+
+## Steering Motor Control
+
+The steering motor uses a second `motor_driver` node instance and listens on:
+
+* `/steering_motor_cmd`
+
+Command format is the same as drive motor (`std_msgs/Float32`, range `-1.0` to `1.0`).
+
+Example steering commands:
+
+```bash
+# Turn one direction
+ros2 topic pub /steering_motor_cmd std_msgs/msg/Float32 "{data: 0.3}" --once
+
+# Turn opposite direction
+ros2 topic pub /steering_motor_cmd std_msgs/msg/Float32 "{data: -0.3}" --once
+
+# Stop steering motor
+ros2 topic pub /steering_motor_cmd std_msgs/msg/Float32 "{data: 0.0}" --once
+```
+
+Steering soft start/stop can be toggled independently from drive:
+
+```bash
+ros2 launch robot_bringup robot_launch.py \
+	enable_steering_motor:=true \
+	steering_soft_start_stop:=true \
+	steering_soft_start_stop_rate_per_s:=0.4
+```
