@@ -13,7 +13,7 @@ ROS2 workspace for a robot with Ackermann steering
 ## Running The Robot
 
 Use the top-level bringup launch when you want the full robot stack. It starts the
-lidar and drive motor together:
+lidar and traction motor together:
 
 ```bash
 cd /home/dano/robot-ros2
@@ -25,7 +25,7 @@ ros2 launch robot_bringup robot_launch.py
 You can disable one subsystem while debugging:
 
 ```bash
-ros2 launch robot_bringup robot_launch.py enable_motor:=false
+ros2 launch robot_bringup robot_launch.py enable_traction_motor:=false
 ros2 launch robot_bringup robot_launch.py enable_lidar:=false
 ```
 
@@ -38,22 +38,22 @@ ros2 launch robot_bringup robot_launch.py enable_steering_motor:=true
 To run steering motor only:
 
 ```bash
-ros2 launch robot_bringup robot_launch.py enable_lidar:=false enable_motor:=false enable_steering_motor:=true
+ros2 launch robot_bringup robot_launch.py enable_lidar:=false enable_traction_motor:=false enable_steering_motor:=true
 ```
 
-To run drive + steering + USB gamepad teleop:
+To run traction + steering + USB gamepad teleop:
 
 ```bash
 ros2 launch robot_bringup robot_launch.py \
 	enable_lidar:=false \
-	enable_motor:=true \
+	enable_traction_motor:=true \
 	enable_steering_motor:=true \
 	enable_gamepad:=true
 ```
 
-## Manual Motor Control
+## Manual Traction Motor Control
 
-The motor driver listens on the `/motor_cmd` topic and expects a `std_msgs/Float32`
+The traction motor driver listens on the `/traction_motor_cmd` topic and expects a `std_msgs/Float32`
 value in the range `-1.0` to `1.0`:
 
 * `1.0` = full forward
@@ -70,13 +70,13 @@ Then publish commands from another terminal:
 
 ```bash
 # Forward at 30%
-ros2 topic pub /motor_cmd std_msgs/msg/Float32 "{data: 0.3}" --once
+ros2 topic pub /traction_motor_cmd std_msgs/msg/Float32 "{data: 0.3}" --once
 
 # Reverse at 30%
-ros2 topic pub /motor_cmd std_msgs/msg/Float32 "{data: -0.3}" --once
+ros2 topic pub /traction_motor_cmd std_msgs/msg/Float32 "{data: -0.3}" --once
 
 # Stop
-ros2 topic pub /motor_cmd std_msgs/msg/Float32 "{data: 0.0}" --once
+ros2 topic pub /traction_motor_cmd std_msgs/msg/Float32 "{data: 0.0}" --once
 ```
 
 The node has a 2 second watchdog, so if commands stop arriving it will coast the
@@ -89,7 +89,7 @@ these parameters:
 * `soft_start_stop_rate_per_s` = how fast the command can change, in normalized
 	command units per second
 
-That means you can enable it for steering and disable it for drive, or give each
+That means you can enable it for steering and disable it for traction, or give each
 motor its own ramp rate.
 
 ## Steering Motor Control
@@ -98,7 +98,7 @@ The steering motor uses a second `motor_driver` node instance and listens on:
 
 * `/steering_motor_cmd`
 
-Command format is the same as drive motor (`std_msgs/Float32`, range `-1.0` to `1.0`).
+Command format is the same as traction motor (`std_msgs/Float32`, range `-1.0` to `1.0`).
 
 Example steering commands:
 
@@ -127,12 +127,12 @@ ros2 launch robot_bringup robot_launch.py \
 The `gamepad_teleop` node reads Linux joystick device `/dev/input/js0` and
 publishes both motor topics:
 
-* drive motor: `/motor_cmd`
+* traction motor: `/traction_motor_cmd`
 * steering motor: `/steering_motor_cmd`
 
 Default axis mapping:
 
-* `axis_drive=1` (left stick vertical)
+* `axis_traction=1` (left stick vertical)
 * `axis_steering=0` (left stick horizontal)
 
 Default scaling:
@@ -153,7 +153,7 @@ Optional: require a deadman button (example button index `4`):
 ```bash
 ros2 launch robot_bringup robot_launch.py \
 	enable_lidar:=false \
-	enable_motor:=true \
+	enable_traction_motor:=true \
 	enable_steering_motor:=true \
 	enable_gamepad:=true \
 	gamepad_deadman_button:=4

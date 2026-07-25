@@ -13,11 +13,11 @@ def generate_launch_description():
     gamepad_launch = Path(get_package_share_directory('gamepad_teleop')) / 'launch' / 'gamepad_launch.py'
 
     enable_lidar = LaunchConfiguration('enable_lidar')
-    enable_motor = LaunchConfiguration('enable_motor')
+    enable_traction_motor = LaunchConfiguration('enable_traction_motor')
     enable_steering_motor = LaunchConfiguration('enable_steering_motor')
     enable_gamepad = LaunchConfiguration('enable_gamepad')
     gamepad_device_path = LaunchConfiguration('gamepad_device_path')
-    gamepad_axis_drive = LaunchConfiguration('gamepad_axis_drive')
+    gamepad_axis_traction = LaunchConfiguration('gamepad_axis_traction')
     gamepad_axis_steering = LaunchConfiguration('gamepad_axis_steering')
     gamepad_deadman_button = LaunchConfiguration('gamepad_deadman_button')
     steering_soft_start_stop = LaunchConfiguration('steering_soft_start_stop')
@@ -30,9 +30,9 @@ def generate_launch_description():
             description='Start the lidar launch file.',
         ),
         DeclareLaunchArgument(
-            'enable_motor',
+            'enable_traction_motor',
             default_value='true',
-            description='Start the drive motor launch instance.',
+            description='Start the traction motor launch instance.',
         ),
         DeclareLaunchArgument(
             'enable_steering_motor',
@@ -50,9 +50,9 @@ def generate_launch_description():
             description='Linux joystick device path for gamepad teleop.',
         ),
         DeclareLaunchArgument(
-            'gamepad_axis_drive',
+            'gamepad_axis_traction',
             default_value='1',
-            description='Joystick axis index for drive command.',
+            description='Joystick axis index for traction command.',
         ),
         DeclareLaunchArgument(
             'gamepad_axis_steering',
@@ -80,7 +80,11 @@ def generate_launch_description():
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(motor_launch)),
-            condition=IfCondition(enable_motor),
+            launch_arguments={
+                'node_name': 'traction_motor_node',
+                'topic_cmd': '/traction_motor_cmd',
+            }.items(),
+            condition=IfCondition(enable_traction_motor),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(motor_launch)),
@@ -100,9 +104,9 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(str(gamepad_launch)),
             launch_arguments={
                 'device_path': gamepad_device_path,
-                'topic_drive': '/motor_cmd',
+                'topic_traction': '/traction_motor_cmd',
                 'topic_steering': '/steering_motor_cmd',
-                'axis_drive': gamepad_axis_drive,
+                'axis_traction': gamepad_axis_traction,
                 'axis_steering': gamepad_axis_steering,
                 'deadman_button': gamepad_deadman_button,
             }.items(),
