@@ -41,6 +41,16 @@ To run steering motor only:
 ros2 launch robot_bringup robot_launch.py enable_lidar:=false enable_motor:=false enable_steering_motor:=true
 ```
 
+To run drive + steering + USB gamepad teleop:
+
+```bash
+ros2 launch robot_bringup robot_launch.py \
+	enable_lidar:=false \
+	enable_motor:=true \
+	enable_steering_motor:=true \
+	enable_gamepad:=true
+```
+
 ## Manual Motor Control
 
 The motor driver listens on the `/motor_cmd` topic and expects a `std_msgs/Float32`
@@ -110,4 +120,41 @@ ros2 launch robot_bringup robot_launch.py \
 	enable_steering_motor:=true \
 	steering_soft_start_stop:=true \
 	steering_soft_start_stop_rate_per_s:=0.4
+```
+
+## USB Gamepad Teleop
+
+The `gamepad_teleop` node reads Linux joystick device `/dev/input/js0` and
+publishes both motor topics:
+
+* drive motor: `/motor_cmd`
+* steering motor: `/steering_motor_cmd`
+
+Default axis mapping:
+
+* `axis_drive=1` (left stick vertical)
+* `axis_steering=0` (left stick horizontal)
+
+Default scaling:
+
+* `max_drive=0.6`
+* `max_steering=0.8`
+* `deadzone=0.08`
+
+If the controller is detected by kernel logs but teleop does not move motors,
+verify the joystick node exists and is readable:
+
+```bash
+ls -l /dev/input/js0
+```
+
+Optional: require a deadman button (example button index `4`):
+
+```bash
+ros2 launch robot_bringup robot_launch.py \
+	enable_lidar:=false \
+	enable_motor:=true \
+	enable_steering_motor:=true \
+	enable_gamepad:=true \
+	gamepad_deadman_button:=4
 ```
