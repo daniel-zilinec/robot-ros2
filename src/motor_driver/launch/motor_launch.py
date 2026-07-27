@@ -33,7 +33,7 @@ def generate_launch_description():
         DeclareLaunchArgument('topic_cmd', default_value='/motor_cmd'),
         DeclareLaunchArgument('invert_direction', default_value='false'),
         DeclareLaunchArgument('soft_start_stop', default_value='true'),
-        DeclareLaunchArgument('soft_start_stop_rate_per_s', default_value='0.1'),
+        DeclareLaunchArgument('soft_start_stop_rate_per_s', default_value='1'),
         DeclareLaunchArgument('debug_ramp', default_value='false'),
         DeclareLaunchArgument('debug_ramp_period_s', default_value='0.5'),
         Node(
