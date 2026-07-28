@@ -56,7 +56,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'gamepad_axis_steering',
-            default_value='3',
+            default_value='2',
             description='Joystick axis index for steering command.',
         ),
         DeclareLaunchArgument(

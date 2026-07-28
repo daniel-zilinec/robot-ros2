@@ -4,9 +4,9 @@ install/
 log/
 
 # Bag recordings - too large for git
-# *.bag
-# *.mcap
-# *.db3
+*.bag
+*.mcap
+*.db3
 
 # Python cache
 __pycache__/
