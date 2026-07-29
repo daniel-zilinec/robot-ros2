@@ -1,10 +1,10 @@
 ackermann_obstacle_avoider:
   ros__parameters:
-    forward_power:      0.40
-    avoid_power:        0.30
+    forward_power:      0.20
+    avoid_power:        0.10
     steer_power:        1.00
     front_half_angle:  45.0
-    stop_distance:      1.00
-    resume_distance:    1.40
+    stop_distance:      0.80
+    resume_distance:    1.20
     avoid_duration:     2.00
-    straighten_factor:  0.85
+    straighten_factor:  0.2

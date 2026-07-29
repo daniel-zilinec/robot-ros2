@@ -44,7 +44,7 @@ class AckermannObstacleAvoider(Node):
         self.declare_parameter('stop_distance',       1.00)  # m — trigger avoidance
         self.declare_parameter('resume_distance',     1.40)  # m — hysteresis
         self.declare_parameter('avoid_duration',      2.00)  # s — how long to turn
-        self.declare_parameter('straighten_factor',   0.85)  # × avoid_duration for return
+        self.declare_parameter('straighten_factor',   0.5)  # × avoid_duration for return
         # straighten_factor < 1.0 because motor doesn't stop instantly
 
         self.forward_power    = self.get_parameter('forward_power').value
@@ -78,14 +78,25 @@ class AckermannObstacleAvoider(Node):
     # ── Helpers ──────────────────────────────────────────────────────────
 
     def get_sector_min(self, msg, angle_start_rad, angle_end_rad):
-        """Minimum valid range in an angular sector."""
-        ranges = [
-            r for i, r in enumerate(msg.ranges)
-            if (angle_start_rad
-                <= (msg.angle_min + i * msg.angle_increment)
-                <= angle_end_rad)
-            and math.isfinite(r) and r > 0.05
-        ]
+        """
+        Minimum valid range in an angular sector.
+        Applies the same correction as the static TF transform:
+        - 180 deg yaw  (lidar mounted backwards)
+        - 180 deg roll (lidar mounted upside down)
+        Combined effect on scan angles: corrected = -raw + pi
+        """
+        ranges = []
+        for i, r in enumerate(msg.ranges):
+            raw_angle = msg.angle_min + i * msg.angle_increment
+            # Apply same correction as TF: negate + shift 180°
+            corrected_angle = -raw_angle + math.pi
+            # Normalise to [-pi, +pi]
+            corrected_angle = math.atan2(
+                math.sin(corrected_angle),
+                math.cos(corrected_angle))
+            if angle_start_rad <= corrected_angle <= angle_end_rad:
+                if math.isfinite(r) and r > 0.05:
+                    ranges.append(r)
         return min(ranges) if ranges else float('inf')
 
     def elapsed(self, msg):
@@ -108,6 +119,29 @@ class AckermannObstacleAvoider(Node):
 
     def scan_callback(self, msg: LaserScan):
 
+        # ── Emergency stop ─────────────────────────────────────────────
+        # Stop immediately if anything in the forward cone is closer than 0.30m.
+        # Uses corrected angles — so car body (behind the sensor) is excluded.
+        forward_close = []
+        for i, r in enumerate(msg.ranges):
+            if not (math.isfinite(r) and r > 0.05):
+                continue
+            raw_angle = msg.angle_min + i * msg.angle_increment
+            corrected_angle = math.atan2(
+                math.sin(-raw_angle + math.pi),
+                math.cos(-raw_angle + math.pi))
+            if -self.front_half_angle <= corrected_angle <= self.front_half_angle:
+                forward_close.append(r)
+
+        forward_min = min(forward_close, default=float('inf'))
+        if forward_min < 0.30:
+            self.publish(0.0, 0.0)
+            self.get_logger().error(f'EMERGENCY STOP — {forward_min:.2f}m')
+            return
+
+    # ── Scan analysis ──────────────────────────────────────────────
+
+
         # ── Scan analysis ──────────────────────────────────────────────
         front_min = self.get_sector_min(
             msg, -self.front_half_angle, self.front_half_angle)
@@ -121,7 +155,7 @@ class AckermannObstacleAvoider(Node):
         if self.state == State.DRIVING:
             if front_min < self.stop_distance:
                 # Lock steering toward the clearer side
-                self.steer_direction = 1.0 if left_min >= right_min else -1.0
+                self.steer_direction = -1.0 if left_min >= right_min else 1.0
                 self.get_logger().info(
                     f'Obstacle {front_min:.2f}m → '
                     f'turning {"LEFT" if self.steer_direction > 0 else "RIGHT"}')
