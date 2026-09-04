@@ -1,21 +1,24 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
     motor_launch = Path(get_package_share_directory('motor_driver')) / 'launch' / 'motor_launch.py'
     lidar_launch = Path(get_package_share_directory('lidar')) / 'launch' / 'lidar_launch.py'
     gamepad_launch = Path(get_package_share_directory('gamepad_teleop')) / 'launch' / 'gamepad_launch.py'
+    foxglove_launch = Path(get_package_share_directory('foxglove_bridge')) / 'launch' / 'foxglove_bridge_launch.xml'
 
     enable_lidar = LaunchConfiguration('enable_lidar')
     enable_traction_motor = LaunchConfiguration('enable_traction_motor')
     enable_steering_motor = LaunchConfiguration('enable_steering_motor')
     enable_gamepad = LaunchConfiguration('enable_gamepad')
+    enable_camera = LaunchConfiguration('enable_camera')
     gamepad_device_path = LaunchConfiguration('gamepad_device_path')
     gamepad_axis_traction = LaunchConfiguration('gamepad_axis_traction')
     gamepad_axis_steering = LaunchConfiguration('gamepad_axis_steering')
@@ -26,7 +29,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'enable_lidar',
-            default_value='false',
+            default_value='true',
             description='Start the lidar launch file.',
         ),
         DeclareLaunchArgument(
@@ -45,6 +48,11 @@ def generate_launch_description():
             description='Start gamepad teleop node for drive and steering topics.',
         ),
         DeclareLaunchArgument(
+            'enable_camera',
+            default_value='true',
+            description='Start the USB camera node.',
+        ),
+        DeclareLaunchArgument(
             'gamepad_device_path',
             default_value='/dev/input/js0',
             description='Linux joystick device path for gamepad teleop.',
@@ -56,7 +64,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'gamepad_axis_steering',
-            default_value='2',
+            default_value='3',
             description='Joystick axis index for steering command.',
         ),
         DeclareLaunchArgument(
@@ -73,6 +81,9 @@ def generate_launch_description():
             'steering_soft_start_stop_rate_per_s',
             default_value='0.4',
             description='Steering ramp rate in command units per second when soft ramp is enabled.',
+        ),
+        IncludeLaunchDescription(
+            AnyLaunchDescriptionSource(str(foxglove_launch)),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(lidar_launch)),
@@ -111,5 +122,18 @@ def generate_launch_description():
                 'deadman_button': gamepad_deadman_button,
             }.items(),
             condition=IfCondition(enable_gamepad),
+        ),
+        Node(
+            package='v4l2_camera',
+            executable='v4l2_camera_node',
+            name='v4l2_camera_node',
+            output='screen',
+            parameters=[{
+                'video_device': '/dev/video0',
+                'image_size': [640, 480],
+                'pixel_format': 'YUYV',
+                'publish_format': 'compressed',
+            }],
+            condition=IfCondition(enable_camera),
         ),
     ])

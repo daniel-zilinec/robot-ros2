@@ -8,11 +8,13 @@
   <license>TODO: License declaration</license>
 
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>foxglove_bridge</exec_depend>
   <exec_depend>gamepad_teleop</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>lidar</exec_depend>
   <exec_depend>motor_driver</exec_depend>
+  <exec_depend>v4l2_camera</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

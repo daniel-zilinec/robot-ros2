@@ -12,8 +12,9 @@ ROS2 workspace for a robot with Ackermann steering
 
 ## Running The Robot
 
-Use the top-level bringup launch when you want the full robot stack. It starts the
-lidar and traction motor together:
+Use the top-level bringup launch when you want the full robot stack. It always starts
+the Foxglove bridge, and by default also starts the traction motor, steering motor, camera,
+lidar and gamepad teleop:
 
 ```bash
 cd /home/dano/robot-ros2
@@ -27,6 +28,8 @@ You can disable one subsystem while debugging:
 ```bash
 ros2 launch robot_bringup robot_launch.py enable_traction_motor:=false
 ros2 launch robot_bringup robot_launch.py enable_lidar:=false
+ros2 launch robot_bringup robot_launch.py enable_gamepad:=false
+ros2 launch robot_bringup robot_launch.py enable_camera:=true
 ```
 
 To start steering motor as a second motor instance:
@@ -157,4 +160,81 @@ ros2 launch robot_bringup robot_launch.py \
 	enable_steering_motor:=true \
 	enable_gamepad:=true \
 	gamepad_deadman_button:=4
+```
+
+## Display
+### XFCE
+```bash
+sudo apt update
+sudo apt install xfce4 xorg xinit lightdm
+sudo systemctl enable lightdm
+sudo reboot
+```
+If it doesn't start try this:
+`sudo nano /etc/X11/xorg.conf.d/99-fbdev.conf`
+```
+Section "Device"
+    Identifier "RPi GPU"
+    Driver     "modesetting"
+    Option     "kmsdev" "/dev/dri/card1"
+EndSection
+```
+
+### Foxglove
+```bash
+sudo apt install ros-lyrical-foxglove-bridge
+curl -O https://get.foxglove.dev/desktop/latest/foxglove-studio-latest-linux-arm64.deb
+sudo apt install ./foxglove-studio-*.deb
+```
+
+The Foxglove bridge is started automatically by:
+
+```bash
+ros2 launch robot_bringup robot_launch.py
+```
+
+## Camera
+Eternico Webcam ET201
+
+
+### 1. Install build dependencies
+```bash
+sudo apt install ros-lyrical-v4l2-camera
+sudo apt install ros-lyrical-image-transport-plugins
+sudo usermod -aG video $USER
+
+source /opt/ros/lyrical/setup.bash
+
+# Run the camera through robot bringup
+ros2 launch robot_bringup robot_launch.py enable_camera:=true
+
+# Verify it's publishing
+ros2 topic list
+ros2 topic hz /image_raw
+```
+
+Camera parameters used by bringup:
+
+```text
+video_device=/dev/video0
+image_size=[640,480]
+pixel_format=YUYV
+publish_format=compressed
+```
+
+More info:
+```bash
+# For verifying V4L2 compliance and controls before launching ROS
+sudo apt install v4l-utils
+
+# Run compliance check on your camera
+v4l2-compliance -d /dev/video0
+
+# See all supported formats/resolutions
+v4l2-ctl --list-formats-ext -d /dev/video0
+```
+
+Record a bag:
+```bash
+ros2 bag record /image_raw/compressed /camera_info -o ~/bags/camera_test
 ```
