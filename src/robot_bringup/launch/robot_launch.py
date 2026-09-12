@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
@@ -12,7 +12,6 @@ def generate_launch_description():
     motor_launch = Path(get_package_share_directory('motor_driver')) / 'launch' / 'motor_launch.py'
     lidar_launch = Path(get_package_share_directory('lidar')) / 'launch' / 'lidar_launch.py'
     gamepad_launch = Path(get_package_share_directory('gamepad_teleop')) / 'launch' / 'gamepad_launch.py'
-    foxglove_launch = Path(get_package_share_directory('foxglove_bridge')) / 'launch' / 'foxglove_bridge_launch.xml'
 
     enable_lidar = LaunchConfiguration('enable_lidar')
     enable_traction_motor = LaunchConfiguration('enable_traction_motor')
@@ -82,8 +81,15 @@ def generate_launch_description():
             default_value='0.4',
             description='Steering ramp rate in command units per second when soft ramp is enabled.',
         ),
-        IncludeLaunchDescription(
-            AnyLaunchDescriptionSource(str(foxglove_launch)),
+        Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
+            name='foxglove_bridge',
+            parameters=[{
+                'best_effort_qos_topic_whitelist': ['.*compressed.*', '.*image_raw.*'],
+                'message_backlog_size': 5,
+                'send_buffer_limit': 500000,   # 500 KB ≈ 8 frames
+            }],
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(lidar_launch)),
@@ -133,7 +139,23 @@ def generate_launch_description():
                 'image_size': [640, 480],
                 'pixel_format': 'YUYV',
                 'publish_format': 'compressed',
+
+                # Reliability overrides
+                'qos_overrides./image_raw.publisher.reliability': 'best_effort',
+                'qos_overrides./image_raw/compressed.publisher.reliability': 'best_effort',
+
+                # Durability overrides — VOLATILE = no cache, no replay
+                'qos_overrides./image_raw.publisher.durability': 'volatile',
+                'qos_overrides./image_raw/compressed.publisher.durability': 'volatile',
+
+                # History: only latest frame matters
+                'qos_overrides./image_raw.publisher.history': 'keep_last',
+                'qos_overrides./image_raw/compressed.publisher.history': 'keep_last',
+                'qos_overrides./image_raw.publisher.depth': 1,
+                'qos_overrides./image_raw/compressed.publisher.depth': 1,
             }],
+
             condition=IfCondition(enable_camera),
         ),
+
     ])
