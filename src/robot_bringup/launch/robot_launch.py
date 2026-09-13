@@ -43,7 +43,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'enable_gamepad',
-            default_value='true',
+            default_value='false',
             description='Start gamepad teleop node for drive and steering topics.',
         ),
         DeclareLaunchArgument(
@@ -139,7 +139,7 @@ def generate_launch_description():
                 'image_size': [640, 480],
                 'pixel_format': 'YUYV',
                 'publish_format': 'compressed',
-                'jpeg_quality': 50,
+                'image_raw.compressed.jpeg_quality': 50,
 
                 # Reliability overrides
                 'qos_overrides./image_raw.publisher.reliability': 'best_effort',
