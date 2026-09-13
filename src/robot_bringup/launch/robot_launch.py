@@ -139,6 +139,7 @@ def generate_launch_description():
                 'image_size': [640, 480],
                 'pixel_format': 'YUYV',
                 'publish_format': 'compressed',
+                'jpeg_quality': 50,
 
                 # Reliability overrides
                 'qos_overrides./image_raw.publisher.reliability': 'best_effort',
@@ -154,8 +155,22 @@ def generate_launch_description():
                 'qos_overrides./image_raw.publisher.depth': 1,
                 'qos_overrides./image_raw/compressed.publisher.depth': 1,
             }],
-
             condition=IfCondition(enable_camera),
+        ),
+
+        # --- GNSS ---
+        Node(
+            package='nmea_navsat_driver',
+            executable='nmea_serial_driver',
+            name='nmea_navsat_driver_node',
+            parameters=[{
+                'port': '/dev/ttyUSB_gnss',
+                'baud': 9600,
+                'frame_id': 'gnss_link',
+                'use_GNSS_time': False,
+                'useRMC': False
+            }],
+            output='screen'
         ),
 
     ])

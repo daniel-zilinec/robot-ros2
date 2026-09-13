@@ -196,6 +196,12 @@ ros2 launch robot_bringup robot_launch.py
 ## Camera
 Eternico Webcam ET201
 
+Set JPEG quality
+```bash
+ros2 param get /v4l2_camera_node image_raw.compressed.jpeg_quality
+# Integer value is: 95
+ros2 param set /v4l2_camera_node image_raw.compressed.jpeg_quality 50
+```
 
 ### 1. Install build dependencies
 ```bash
