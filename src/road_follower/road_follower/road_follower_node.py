@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import CompressedImage
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -22,8 +22,8 @@ class RoadFollower(Node):
         )
 
         self.sub = self.create_subscription(
-            Image,
-            '/image_raw',
+            CompressedImage,
+            '/image_raw/compressed',
             self.image_callback,
             qos
         )
@@ -36,7 +36,7 @@ class RoadFollower(Node):
         self.roi_top_fraction = 0.1
 
     def image_callback(self, msg):
-        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         h, w = frame.shape[:2]
 
         # ── ROI: only look at the bottom half of the image ──────────────
@@ -111,7 +111,7 @@ class RoadFollower(Node):
         cv2.waitKey(1)   # ← MUST have this or window won't update
 
         # ── Publish processed image (for remote Foxglove) ─────
-        jpeg_quality = 75    # 0-100, lower = smaller file, more artifacts
+        jpeg_quality = 60    # 0-100, lower = smaller file, more artifacts
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
         success, buffer = cv2.imencode('.jpg', display, encode_params)
 
