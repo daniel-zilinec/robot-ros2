@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Float32
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -31,30 +32,51 @@ class RoadFollower(Node):
 
         # Optional: publish processed image (for foxglove on your laptop)
         self.pub = self.create_publisher(CompressedImage, '/road_follower/debug_image/compressed', 10)
+        self.error_pub = self.create_publisher(Float32, '/road_follower/error', 10)
 
-        # Only process bottom 90% of frame (road is below horizon)
-        self.roi_top_fraction = 0.1
+        # Only process bottom part of frame (road is below horizon)
+        self.roi_top_fraction = 0.05
 
     def image_callback(self, msg):
         frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         h, w = frame.shape[:2]
 
-        # ── ROI: only look at the bottom half of the image ──────────────
+        # ── ROI: only look at the bottom part of the image ──────────────
         roi_y = int(h * self.roi_top_fraction)
         roi = frame[roi_y:h, 0:w]
 
+        # Blur to remove small specks (leaves, stones) before color thresholding
+        # medianBlur requires an odd kernel size
+        roi = cv2.medianBlur(roi, 9)
+
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # HSV separates:
+        # Hue — the actual color (0–180 in OpenCV: red→yellow→green→cyan→blue→purple→red)
+        # Saturation — how vivid/pure the color is
+        # Value — brightness
 
         # ── Grass mask: green hues ───────────────────────────────────────
         # Tweak these ranges to your environment!
-        grass_lower = np.array([25, 40, 40])
-        grass_upper = np.array([85, 255, 255])
+        grass_hue = 60  # approximate hue for green in OpenCV HSV (0-180)
+        grass_hue_delta = 35  # allowable deviation from the central green hue
+        grass_lower = np.array([grass_hue - grass_hue_delta, 30, 40])
+        grass_upper = np.array([grass_hue + grass_hue_delta, 255, 255])
         grass_mask = cv2.inRange(hsv, grass_lower, grass_upper)
 
         # ── Road mask: low saturation (gray/gravel/asphalt) ─────────────
-        road_lower = np.array([0, 0, 60])
-        road_upper = np.array([180, 50, 220])
+        road_lower = np.array([0, 0, 50])
+        road_upper = np.array([180, 50, 255])
         road_mask = cv2.inRange(hsv, road_lower, road_upper)
+
+        # Morphological opening: erase small isolated blobs (leaves, stones) left in the masks
+        noise_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (20, 20))
+        grass_mask = cv2.morphologyEx(grass_mask, cv2.MORPH_OPEN, noise_kernel)
+        road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_OPEN, noise_kernel)
+
+        # Exclude pixels classified as grass from the road mask
+        road_mask = cv2.bitwise_and(road_mask, cv2.bitwise_not(grass_mask))
+        road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_CLOSE, noise_kernel)
 
         # ── Overlay on display frame ─────────────────────────────────────
         display = frame.copy()
@@ -62,7 +84,13 @@ class RoadFollower(Node):
         display[roi_y:h][road_mask > 0]  = [0, 0, 200]    # red tint on road
 
         # ── Road column histogram curve ──────────────────────────────────────────
-        col_sums = road_mask.sum(axis=0).astype(np.float32)  # shape: (w,)
+        # For each column, length of the unbroken run of road pixels from the bottom row upward
+        road_from_bottom = road_mask[::-1, :] != 0
+        is_zero = ~road_from_bottom
+        first_zero_idx = np.argmax(is_zero, axis=0)
+        no_zero = ~is_zero.any(axis=0)  # column is road all the way up
+        col_sums = np.where(no_zero, road_mask.shape[0], first_zero_idx).astype(np.float32)  # shape: (w,)
+        col_sums = col_sums ** 5  # exaggerate longer runs over shorter ones
 
         if col_sums.max() > 0:
             max_curve_height = 120  # max height of the curve in pixels — tune to taste
@@ -90,18 +118,20 @@ class RoadFollower(Node):
                             (0, 180, 180), 1)
 
         # ── Road center estimation ───────────────────────────────────────
-        road_cols = np.where(road_mask.sum(axis=0) > 20)[0]  # columns with road
-        if len(road_cols) > 0:
-            road_center = int(road_cols.mean())
+        total_road_weight = col_sums.sum()
+        if total_road_weight > 0:
+            road_center = int(np.average(np.arange(w), weights=col_sums))
             frame_center = w // 2
-            error = road_center - frame_center  # positive = road is right of center
+            error = float(np.clip((road_center - frame_center) / (w / 2), -1.0, 1.0))
+            self.error_pub.publish(Float32(data=error))
 
             cv2.line(display, (road_center + 0, roi_y),
                                (road_center, h), (255, 255, 0), 2)
             cv2.line(display, (frame_center, roi_y),
                                (frame_center, h), (255, 0, 255), 1)
-            cv2.putText(display, f'Error: {error:+d}px', (10, 30),
+            cv2.putText(display, f'Error: {error:+.2f}', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
         else:
             cv2.putText(display, 'ROAD LOST', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)

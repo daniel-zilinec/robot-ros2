@@ -159,10 +159,10 @@ curl -O https://get.foxglove.dev/desktop/latest/foxglove-studio-latest-linux-arm
 sudo apt install ./foxglove-studio-*.deb
 ```
 
-The Foxglove bridge is started automatically by:
+The Foxglove bridge is started automatically by global launch, but can be started manually with
 
 ```bash
-ros2 launch robot_bringup robot_launch.py
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 ```
 
 ## Camera
