@@ -8,3 +8,6 @@ ackermann_obstacle_avoider:
     resume_distance:    1.20
     avoid_duration:     2.00
     straighten_factor:  0.2
+    road_steer_gain:    1.00
+    road_error_timeout_s: 1.00
+

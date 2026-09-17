@@ -12,12 +12,17 @@ def generate_launch_description():
     motor_launch = Path(get_package_share_directory('motor_driver')) / 'launch' / 'motor_launch.py'
     lidar_launch = Path(get_package_share_directory('lidar')) / 'launch' / 'lidar_launch.py'
     gamepad_launch = Path(get_package_share_directory('gamepad_teleop')) / 'launch' / 'gamepad_launch.py'
+    steering_sensor_launch = Path(get_package_share_directory('steering_sensor')) / 'launch' / 'steering_sensor.launch.py'
+    obstacle_avoidance_launch = Path(get_package_share_directory('obstacle_avoidance')) / 'launch' / 'avoidance.launch.py'
 
     enable_lidar = LaunchConfiguration('enable_lidar')
     enable_traction_motor = LaunchConfiguration('enable_traction_motor')
     enable_steering_motor = LaunchConfiguration('enable_steering_motor')
     enable_gamepad = LaunchConfiguration('enable_gamepad')
     enable_camera = LaunchConfiguration('enable_camera')
+    enable_steering_sensor = LaunchConfiguration('enable_steering_sensor')
+    enable_road_follower = LaunchConfiguration('enable_road_follower')
+    enable_obstacle_avoidance = LaunchConfiguration('enable_obstacle_avoidance')
     gamepad_device_path = LaunchConfiguration('gamepad_device_path')
     gamepad_axis_traction = LaunchConfiguration('gamepad_axis_traction')
     gamepad_axis_steering = LaunchConfiguration('gamepad_axis_steering')
@@ -50,6 +55,21 @@ def generate_launch_description():
             'enable_camera',
             default_value='true',
             description='Start the USB camera node.',
+        ),
+        DeclareLaunchArgument(
+            'enable_steering_sensor',
+            default_value='true',
+            description='Start the lidar-based steering angle estimator + closed-loop steering controller.',
+        ),
+        DeclareLaunchArgument(
+            'enable_road_follower',
+            default_value='true',
+            description='Start the camera-based road follower node.',
+        ),
+        DeclareLaunchArgument(
+            'enable_obstacle_avoidance',
+            default_value='true',
+            description='Start the lidar-based obstacle avoidance node.',
         ),
         DeclareLaunchArgument(
             'gamepad_device_path',
@@ -122,12 +142,27 @@ def generate_launch_description():
             launch_arguments={
                 'device_path': gamepad_device_path,
                 'topic_traction': '/traction_motor_cmd',
-                'topic_steering': '/steering_motor_cmd',
+                'topic_steering': '/steering_cmd',
                 'axis_traction': gamepad_axis_traction,
                 'axis_steering': gamepad_axis_steering,
                 'deadman_button': gamepad_deadman_button,
             }.items(),
             condition=IfCondition(enable_gamepad),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(str(steering_sensor_launch)),
+            condition=IfCondition(enable_steering_sensor),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(str(obstacle_avoidance_launch)),
+            condition=IfCondition(enable_obstacle_avoidance),
+        ),
+        Node(
+            package='road_follower',
+            executable='road_follower',
+            name='road_follower',
+            output='screen',
+            condition=IfCondition(enable_road_follower),
         ),
         Node(
             package='v4l2_camera',

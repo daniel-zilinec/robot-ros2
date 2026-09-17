@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Ackermann obstacle avoidance node for open-loop DC steering motor.
-No /cmd_vel — uses /traction_motor_cmd and /steering_motor_cmd directly.
+Ackermann obstacle avoidance node for open-loop DC traction / closed-loop steering.
+Uses /traction_motor_cmd directly; steering goes through /steering_cmd, which
+is consumed by steering_sensor's closed-loop steering_controller_node.
 
 Topics:
-  Subscribe: /scan_c1       (sensor_msgs/LaserScan)
-  Publish:   /traction_motor_cmd  (std_msgs/Float32, range -1.0 to +1.0)
-  Publish:   /steering_motor_cmd  (std_msgs/Float32, range -1.0 to +1.0)
+  Subscribe: /scan_c1              (sensor_msgs/LaserScan)
+  Subscribe: /road_follower/error  (std_msgs/Float32, -1..1, road center offset)
+  Publish:   /traction_motor_cmd   (std_msgs/Float32, range -1.0 to +1.0)
+  Publish:   /steering_cmd         (std_msgs/Float32, range -1.0 to +1.0)
              +1.0 = full left, -1.0 = full right, 0.0 = neutral power
 
 States:
-  DRIVING      → forward at cruise speed, steering neutral (0.0)
+  DRIVING      → forward at cruise speed, steering follows road_follower error
   AVOIDING     → forward at avoid speed, full steering lock one direction
   STRAIGHTENING→ forward at avoid speed, full steering lock OTHER direction
                  for same duration as AVOIDING (with correction factor)
@@ -46,6 +48,8 @@ class AckermannObstacleAvoider(Node):
         self.declare_parameter('avoid_duration',      2.00)  # s — how long to turn
         self.declare_parameter('straighten_factor',   0.5)  # × avoid_duration for return
         # straighten_factor < 1.0 because motor doesn't stop instantly
+        self.declare_parameter('road_steer_gain',     1.00)  # scales road_follower error into steering cmd
+        self.declare_parameter('road_error_timeout_s', 1.00)  # treat stale road error as 0 (drive straight)
 
         self.forward_power    = self.get_parameter('forward_power').value
         self.avoid_power      = self.get_parameter('avoid_power').value
@@ -56,11 +60,15 @@ class AckermannObstacleAvoider(Node):
         self.resume_distance  = self.get_parameter('resume_distance').value
         self.avoid_duration   = self.get_parameter('avoid_duration').value
         self.straighten_factor = self.get_parameter('straighten_factor').value
+        self.road_steer_gain  = self.get_parameter('road_steer_gain').value
+        self.road_error_timeout_s = self.get_parameter('road_error_timeout_s').value
 
         # ── State ──────────────────────────────────────────────────────
         self.state            = State.DRIVING
         self.steer_direction  = 0.0   # +1.0 = left, -1.0 = right (locked per episode)
         self.state_start_time = None  # rclpy.Time when current timed state began
+        self.road_error       = 0.0
+        self.road_error_rx_s  = None
 
         # ── ROS 2 interfaces ───────────────────────────────────────────
         self.scan_sub = self.create_subscription(
@@ -68,12 +76,29 @@ class AckermannObstacleAvoider(Node):
             self.scan_callback,
             qos_profile_sensor_data)          # best-effort QoS for sensor data
 
+        self.road_error_sub = self.create_subscription(
+            Float32, '/road_follower/error',
+            self.road_error_callback, 10)
+
         self.traction_pub = self.create_publisher(
             Float32, '/traction_motor_cmd', 10)
         self.steering_pub = self.create_publisher(
-            Float32, '/steering_motor_cmd', 10)
+            Float32, '/steering_cmd', 10)
 
         self.get_logger().info('Obstacle avoider started — State: DRIVING')
+
+    def road_error_callback(self, msg: Float32):
+        self.road_error = msg.data
+        self.road_error_rx_s = self.get_clock().now().nanoseconds * 1e-9
+
+    def get_road_steer(self):
+        """Road-following steering target, or 0.0 (drive straight) if stale/absent."""
+        if self.road_error_rx_s is None:
+            return 0.0
+        age_s = self.get_clock().now().nanoseconds * 1e-9 - self.road_error_rx_s
+        if age_s > self.road_error_timeout_s:
+            return 0.0
+        return max(-1.0, min(1.0, self.road_error * self.road_steer_gain))
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -161,7 +186,7 @@ class AckermannObstacleAvoider(Node):
                     f'turning {"LEFT" if self.steer_direction > 0 else "RIGHT"}')
                 self.set_state(State.AVOIDING)
             else:
-                self.publish(self.forward_power, 0.0)
+                self.publish(self.forward_power, self.get_road_steer())
 
         elif self.state == State.AVOIDING:
             if self.elapsed(msg) >= self.avoid_duration:
@@ -179,7 +204,7 @@ class AckermannObstacleAvoider(Node):
                 if front_min >= self.resume_distance:
                     self.get_logger().info('Straightened + path clear → DRIVING')
                     self.set_state(State.DRIVING)
-                    self.publish(self.forward_power, 0.0)
+                    self.publish(self.forward_power, self.get_road_steer())
                 else:
                     # Path still blocked — avoid again (same direction)
                     self.get_logger().warning(

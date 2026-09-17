@@ -1,0 +1,27 @@
+steering_estimator:
+  ros__parameters:
+    # Wheel blob measured by ruler (base_link frame, wheels straight):
+    # front (X=-0.08,Y=-0.19) -> range~0.21m, angle~-112.8deg
+    # back  (X=-0.30,Y=-0.19) -> range~0.36m, angle~-147.7deg
+    # Signed window (not abs) — the other side has its own returns that
+    # would cancel the mean out if both were included.
+    blob_angle_min_deg:  -155.0
+    blob_angle_max_deg:  -105.0
+    blob_range_min_m:       0.15
+    blob_range_max_m:       0.40
+    # Fill in during calibration — echo /steering_sensor/debug_raw_angle_deg
+    # at each steering lock and record the value here.
+    # Measured 2026-09-17, physically confirmed: LEFT=-122deg (+/-1.5), RIGHT=-135deg (+/-1.5), center=-129.5deg
+    calib_left_angle_deg:  -122.0
+    calib_center_angle_deg: -129.5
+    calib_right_angle_deg: -135.0
+
+steering_controller:
+  ros__parameters:
+    kp:                          1.5
+    # cmd=+1.0 physically moved the wheel towards -1 on /steering_angle
+    # (opposite polarity) — see steering_feedback_plan.md.
+    motor_sign:                 -1.0
+    control_rate_hz:            50.0
+    cmd_watchdog_timeout_s:      1.0
+    measured_watchdog_timeout_s: 0.5
