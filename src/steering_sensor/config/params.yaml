@@ -25,3 +25,5 @@ steering_controller:
     control_rate_hz:            50.0
     cmd_watchdog_timeout_s:      1.0
     measured_watchdog_timeout_s: 0.5
+    # |target-measured| below this outputs 0 instead of dithering on lidar noise.
+    error_deadzone:              0.15

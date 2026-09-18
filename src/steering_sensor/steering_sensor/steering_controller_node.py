@@ -29,12 +29,15 @@ class SteeringController(Node):
         # Measured 2026-09-17: increasing /steering_motor_cmd moves the wheel
         # towards -1 on /steering_angle, so the two are inverted here.
         self.declare_parameter('motor_sign', -1.0)
+        # Below this |target-measured|, output 0 instead of dithering on lidar noise.
+        self.declare_parameter('error_deadzone', 0.04)
 
         self.kp = self.get_parameter('kp').value
         self.control_rate_hz = self.get_parameter('control_rate_hz').value
         self.cmd_watchdog_timeout_s = self.get_parameter('cmd_watchdog_timeout_s').value
         self.measured_watchdog_timeout_s = self.get_parameter('measured_watchdog_timeout_s').value
         self.motor_sign = self.get_parameter('motor_sign').value
+        self.error_deadzone = self.get_parameter('error_deadzone').value
 
         self.target = 0.0
         self.measured = 0.0
@@ -74,7 +77,10 @@ class SteeringController(Node):
             target = 0.0
 
         error = target - self.measured
-        output = max(-1.0, min(1.0, self.motor_sign * self.kp * error))
+        if abs(error) < self.error_deadzone:
+            output = 0.0
+        else:
+            output = max(-1.0, min(1.0, self.motor_sign * self.kp * error))
         self.motor_pub.publish(Float32(data=output))
 
 

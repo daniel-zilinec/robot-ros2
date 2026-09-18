@@ -19,7 +19,14 @@ Steering signal convention throughout: normalized **-1..1** (matches existing
 
 ## TODO next session
 
-- **Add an error deadzone to `steering_controller_node.py`.** Observed on
+- [x] **Add an error deadzone to `steering_controller_node.py`.** — **done
+  2026-09-18**, hard deadzone: `error_deadzone` param (default 0.04) in
+  `config/params.yaml`, in `_on_timer` outputs 0 instead of
+  `motor_sign * kp * error` whenever `abs(target - measured) < error_deadzone`.
+  Not yet re-verified on hardware for hunting/dither — still tune the value
+  live if it doesn't fully stop it. Original context below.
+
+  Observed on
   hardware: lidar noise on `/steering_angle` (~1-1.5deg raw, amplified by the
   narrow ~13deg calibration span) causes the P controller to constantly
   hunt/dither the steering motor back and forth trying to null out a tiny
