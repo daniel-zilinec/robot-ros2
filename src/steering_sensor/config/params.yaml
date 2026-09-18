@@ -19,9 +19,10 @@ steering_estimator:
 steering_controller:
   ros__parameters:
     kp:                          1.5
-    # cmd=+1.0 physically moved the wheel towards -1 on /steering_angle
-    # (opposite polarity) — see steering_feedback_plan.md.
+    # Validated motor polarity for the steering feedback loop.
     motor_sign:                 -1.0
+    # Invert incoming /steering_cmd without changing feedback motor polarity.
+    target_sign:                -1.0
     control_rate_hz:            50.0
     cmd_watchdog_timeout_s:      1.0
     measured_watchdog_timeout_s: 0.5

@@ -26,7 +26,7 @@ def generate_launch_description():
         DeclareLaunchArgument('axis_traction', default_value='1'),
         DeclareLaunchArgument('axis_steering', default_value='0'),
         DeclareLaunchArgument('invert_traction', default_value='true'),
-        DeclareLaunchArgument('invert_steering', default_value='true'),
+        DeclareLaunchArgument('invert_steering', default_value='false'),
         DeclareLaunchArgument('max_traction', default_value='0.4'),
         DeclareLaunchArgument('max_steering', default_value='0.8'),
         DeclareLaunchArgument('deadzone', default_value='0.08'),
