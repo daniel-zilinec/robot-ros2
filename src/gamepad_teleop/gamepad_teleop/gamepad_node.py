@@ -110,7 +110,7 @@ class GamepadTeleopNode(Node):
         now_s = time.monotonic()
         if (now_s - self._last_connect_log_s) >= 5.0:
             self._last_connect_log_s = now_s
-            self.get_logger().warn(msg)
+            self.get_logger().warning(msg)
 
     def _apply_deadzone(self, value: float) -> float:
         if abs(value) < self.deadzone:

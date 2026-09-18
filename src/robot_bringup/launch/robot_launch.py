@@ -168,7 +168,6 @@ def generate_launch_description():
                 'device_path': gamepad_device_path,
                 'topic_traction': '/traction_motor_cmd',
                 'topic_steering': '/steering_cmd',
-                'invert_steering': 'true',
                 'axis_traction': gamepad_axis_traction,
                 'axis_steering': gamepad_axis_steering,
                 'deadman_button': gamepad_deadman_button,

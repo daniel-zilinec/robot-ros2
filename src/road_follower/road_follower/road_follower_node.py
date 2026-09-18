@@ -15,6 +15,13 @@ class RoadFollower(Node):
         super().__init__('road_follower')
         self.bridge = CvBridge()
 
+        self.declare_parameter('show_local_window', False)  # requires a display (DISPLAY/xcb); off for headless RPi5
+        self.show_local_window = self.get_parameter('show_local_window').value
+
+        self.declare_parameter('target_processing_hz', 10.0)  # camera runs faster than this is actually needed
+        self.min_frame_interval_s = 1.0 / self.get_parameter('target_processing_hz').value
+        self.last_processed_s = 0.0
+
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -38,6 +45,11 @@ class RoadFollower(Node):
         self.roi_top_fraction = 0.05
 
     def image_callback(self, msg):
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        if now_s - self.last_processed_s < self.min_frame_interval_s:
+            return  # drop frame — processing every camera frame isn't needed and pegs the CPU
+        self.last_processed_s = now_s
+
         frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         h, w = frame.shape[:2]
 
@@ -78,11 +90,6 @@ class RoadFollower(Node):
         road_mask = cv2.bitwise_and(road_mask, cv2.bitwise_not(grass_mask))
         road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_CLOSE, noise_kernel)
 
-        # ── Overlay on display frame ─────────────────────────────────────
-        display = frame.copy()
-        display[roi_y:h][grass_mask > 0] = [0, 200, 0]    # green tint on grass
-        display[roi_y:h][road_mask > 0]  = [0, 0, 200]    # red tint on road
-
         # ── Road column histogram curve ──────────────────────────────────────────
         # For each column, length of the unbroken run of road pixels from the bottom row upward
         road_from_bottom = road_mask[::-1, :] != 0
@@ -91,6 +98,25 @@ class RoadFollower(Node):
         no_zero = ~is_zero.any(axis=0)  # column is road all the way up
         col_sums = np.where(no_zero, road_mask.shape[0], first_zero_idx).astype(np.float32)  # shape: (w,)
         col_sums = col_sums ** 5  # exaggerate longer runs over shorter ones
+
+        # ── Road center estimation (needed for /road_follower/error, always run) ──
+        total_road_weight = col_sums.sum()
+        road_center = None
+        error = None
+        if total_road_weight > 0:
+            road_center = int(np.average(np.arange(w), weights=col_sums))
+            frame_center = w // 2
+            error = float(np.clip((road_center - frame_center) / (w / 2), -1.0, 1.0))
+            self.error_pub.publish(Float32(data=error))
+
+        # ── Debug overlay image: skip entirely if nobody is viewing it (Foxglove or local window) ──
+        # (tinting/curve-drawing/JPEG-encode is pure visualization, not needed for control)
+        if self.pub.get_subscription_count() == 0 and not self.show_local_window:
+            return
+
+        display = frame.copy()
+        display[roi_y:h][grass_mask > 0] = [0, 200, 0]    # green tint on grass
+        display[roi_y:h][road_mask > 0]  = [0, 0, 200]    # red tint on road
 
         if col_sums.max() > 0:
             max_curve_height = 120  # max height of the curve in pixels — tune to taste
@@ -117,28 +143,21 @@ class RoadFollower(Node):
                             (x, h - col_sums_norm[x]),
                             (0, 180, 180), 1)
 
-        # ── Road center estimation ───────────────────────────────────────
-        total_road_weight = col_sums.sum()
-        if total_road_weight > 0:
-            road_center = int(np.average(np.arange(w), weights=col_sums))
-            frame_center = w // 2
-            error = float(np.clip((road_center - frame_center) / (w / 2), -1.0, 1.0))
-            self.error_pub.publish(Float32(data=error))
-
+        if road_center is not None:
             cv2.line(display, (road_center + 0, roi_y),
                                (road_center, h), (255, 255, 0), 2)
             cv2.line(display, (frame_center, roi_y),
                                (frame_center, h), (255, 0, 255), 1)
             cv2.putText(display, f'Error: {error:+.2f}', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
         else:
             cv2.putText(display, 'ROAD LOST', (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-        # ── Local display ────────────────────────────────────────────────
-        cv2.imshow('Road Follower', display)
-        cv2.waitKey(1)   # ← MUST have this or window won't update
+        # ── Local display (optional — needs a real display attached) ─────
+        if self.show_local_window:
+            cv2.imshow('Road Follower', display)
+            cv2.waitKey(1)   # ← MUST have this or window won't update
 
         # ── Publish processed image (for remote Foxglove) ─────
         jpeg_quality = 60    # 0-100, lower = smaller file, more artifacts
@@ -159,7 +178,8 @@ def main(args=None):
     try:
         rclpy.spin(node)
     finally:
-        cv2.destroyAllWindows()
+        if node.show_local_window:
+            cv2.destroyAllWindows()
         node.destroy_node()
         rclpy.shutdown()
 

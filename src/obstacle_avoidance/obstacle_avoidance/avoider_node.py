@@ -19,10 +19,12 @@ States:
 """
 
 import math
+import cv2
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, CompressedImage
 from std_msgs.msg import Float32, Bool
 from enum import Enum
 
@@ -50,6 +52,9 @@ class AckermannObstacleAvoider(Node):
         # straighten_factor < 1.0 because motor doesn't stop instantly
         self.declare_parameter('road_steer_gain',     1.00)  # scales road_follower error into steering cmd
         self.declare_parameter('road_error_timeout_s', 1.00)  # treat stale road error as 0 (drive straight)
+        self.declare_parameter('enable_debug_image',  True)  # publish bird's-eye lidar view for Foxglove
+        self.declare_parameter('debug_image_size_px', 500)   # square canvas side length
+        self.declare_parameter('debug_image_max_range_m', 3.0)  # canvas edge = this many meters
 
         self.forward_power    = self.get_parameter('forward_power').value
         self.avoid_power      = self.get_parameter('avoid_power').value
@@ -62,6 +67,9 @@ class AckermannObstacleAvoider(Node):
         self.straighten_factor = self.get_parameter('straighten_factor').value
         self.road_steer_gain  = self.get_parameter('road_steer_gain').value
         self.road_error_timeout_s = self.get_parameter('road_error_timeout_s').value
+        self.enable_debug_image = self.get_parameter('enable_debug_image').value
+        self.debug_image_size_px = self.get_parameter('debug_image_size_px').value
+        self.debug_image_max_range_m = self.get_parameter('debug_image_max_range_m').value
         self.declare_parameter('autonomy_enabled_timeout_s', 1.00)  # start/pause watchdog
         self.autonomy_enabled_timeout_s = self.get_parameter('autonomy_enabled_timeout_s').value
 
@@ -94,6 +102,8 @@ class AckermannObstacleAvoider(Node):
             Float32, '/traction_motor_cmd', 10)
         self.steering_pub = self.create_publisher(
             Float32, '/steering_cmd', 10)
+        self.debug_image_pub = self.create_publisher(
+            CompressedImage, '/obstacle_avoidance/debug_image/compressed', 10)
 
         self.get_logger().info('Obstacle avoider started — State: DRIVING')
 
@@ -163,9 +173,93 @@ class AckermannObstacleAvoider(Node):
         self.state_start_time = self.get_clock().now()
         self.get_logger().info(f'→ State: {new_state.value}')
 
+    # ── Debug visualization ─────────────────────────────────────────────
+
+    def publish_debug_image(self, msg: LaserScan):
+        """Bird's-eye render of the corrected scan, for Foxglove (self-contained —
+        does not touch/depend on the control-flow state below)"""
+        size = self.debug_image_size_px
+        max_range = self.debug_image_max_range_m
+        px_per_m = size / (2.0 * max_range)
+        origin = (size // 2, int(size * 2 / 3))  # lower 1/3 — leaves room to show behind the robot
+        canvas = np.zeros((size, size, 3), dtype=np.uint8)
+
+        front_close = []
+        left_close = []
+        right_close = []
+        for i, r in enumerate(msg.ranges):
+            if not (math.isfinite(r) and r > 0.05):
+                continue
+            raw_angle = msg.angle_min + i * msg.angle_increment
+            angle = math.atan2(math.sin(-raw_angle + math.pi),
+                                math.cos(-raw_angle + math.pi))
+
+            if r < self.stop_distance:
+                color = (0, 0, 255)      # red — inside stop threshold
+            elif r < self.resume_distance:
+                color = (0, 165, 255)    # orange — inside resume threshold
+            else:
+                color = (0, 220, 0)      # green — clear
+
+            # +x forward (up on canvas), +y left (matches steering convention, +1=left)
+            px = int(origin[0] - r * math.sin(angle) * px_per_m)
+            py = int(origin[1] - r * math.cos(angle) * px_per_m)
+            if 0 <= px < size and 0 <= py < size:
+                cv2.circle(canvas, (px, py), 2, color, -1)
+
+            if -self.front_half_angle <= angle <= self.front_half_angle:
+                front_close.append(r)
+            if 0.0 <= angle <= self.front_half_angle:
+                left_close.append(r)
+            if -self.front_half_angle <= angle <= 0.0:
+                right_close.append(r)
+
+        front_min = min(front_close, default=float('inf'))
+        left_min = min(left_close, default=float('inf'))
+        right_min = min(right_close, default=float('inf'))
+
+        # Robot marker + heading arrow
+        cv2.circle(canvas, origin, 6, (255, 255, 255), -1)
+        cv2.arrowedLine(canvas, origin, (origin[0], origin[1] - 30), (255, 255, 255), 2, tipLength=0.4)
+
+        # Front half-angle cone
+        cone_len = max_range * px_per_m
+        for a in (-self.front_half_angle, self.front_half_angle):
+            end = (int(origin[0] - cone_len * math.sin(a)),
+                   int(origin[1] - cone_len * math.cos(a)))
+            cv2.line(canvas, origin, end, (128, 128, 128), 1)
+
+        # Stop/resume distance circles
+        cv2.circle(canvas, origin, int(self.stop_distance * px_per_m), (0, 0, 180), 1)
+        cv2.circle(canvas, origin, int(self.resume_distance * px_per_m), (0, 120, 180), 1)
+
+        autonomy_txt = 'ENABLED' if self.is_autonomy_enabled() else 'PAUSED'
+        lines = [
+            f'State: {self.state.value}  [{autonomy_txt}]',
+            f'front={front_min:.2f}m left={left_min:.2f}m right={right_min:.2f}m',
+        ]
+        for i, line in enumerate(lines):
+            cv2.putText(canvas, line, (8, 20 + i * 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        ok, buffer = cv2.imencode('.jpg', canvas, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        if ok:
+            out = CompressedImage()
+            out.header.stamp = self.get_clock().now().to_msg()
+            out.header.frame_id = 'base_link'
+            out.format = 'jpeg'
+            out.data = buffer.tobytes()
+            self.debug_image_pub.publish(out)
+
     # ── Main callback ─────────────────────────────────────────────────────
 
     def scan_callback(self, msg: LaserScan):
+
+        if self.enable_debug_image:
+            try:
+                self.publish_debug_image(msg)
+            except Exception as e:
+                self.get_logger().error(f'debug image render failed: {e}')
 
         # ── Start/Pause gate ────────────────────────────────────────────
         # While paused, stay hands-off entirely (gamepad/human owns the motors).

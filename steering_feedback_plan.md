@@ -15,6 +15,7 @@ Steering signal convention throughout: normalized **-1..1** (matches existing
 - [x] Phase C — road+obstacle arbitration (`obstacle_avoidance` diff) — implemented, **not yet field tested**
 - [x] Wiring — `robot_bringup` launch updates — implemented, **not yet run end-to-end**
 - [ ] Phase D — stretch: remove obstacle_avoidance state machine (optional, only if time remains)
+- [x] Start/Pause GPIO control (`run_state_node`, GPIO17/27) — implemented and **verified on hardware**, see dedicated section below
 
 ## TODO next session
 
@@ -159,6 +160,50 @@ tested and working with time to spare.
   `gamepad_teleop/gamepad_node.py` (line ~113) still use `.warn()` and will
   crash the node if that code path is ever hit — not fixed yet (out of scope
   of this task, flagged to user, consider patching before competition).
+
+## Start/Pause GPIO control (added + verified on hardware, 2026-09-18)
+
+New feature, separate from the steering-feedback phases above but built on
+top of the same `robot_bringup`/`obstacle_avoidance` stack. Two momentary
+buttons wired to the RPi5: GPIO17 = START, GPIO27 = PAUSE (active-low,
+internal pull-up). Robot boots **paused**; gamepad drives freely; START
+enables autonomous driving (obstacle_avoidance + road_follower via its
+existing `/road_follower/error` input).
+
+- New node `src/robot_bringup/robot_bringup/run_state_node.py`:
+  - Polls GPIO17/27 via `lgpio` (debounced), publishes `/autonomy_enabled`
+    (`std_msgs/Bool`) every tick, defaults to `false` (paused) at boot.
+  - Bonus (now the default): `run_control_manage_gamepad` launch arg spawns
+    `gamepad.sh` on PAUSE (kill-then-respawn fresh on *every* PAUSE press —
+    fixes stale `/dev/input/js0` reads when the physical gamepad is powered
+    on late) and kills it on START, via `subprocess.Popen(...,
+    preexec_fn=os.setsid)` / `os.killpg`.
+- `obstacle_avoidance/avoider_node.py` gated on `/autonomy_enabled`:
+  - New param `autonomy_enabled_timeout_s` (default 1.0s) — staleness
+    watchdog, fails safe (treated as paused) if `run_state_node` dies.
+  - When paused/stale: publishes a single zero-command on the
+    enabled→disabled transition, then goes fully silent — skips the state
+    machine *and* the emergency-stop check entirely (human/gamepad has full
+    responsibility while paused, to avoid two publishers racing on
+    `/traction_motor_cmd` / `/steering_cmd`).
+- `robot_bringup/launch/robot_launch.py`: new args `enable_run_control`
+  (default `true`), `run_control_start_pin`/`run_control_pause_pin`
+  (17/27), `run_control_manage_gamepad` (default `true`); includes
+  `run_state_node`.
+- Gamepad steering direction fix (found while testing this feature):
+  `gamepad_teleop`'s `gamepad_launch.py` `invert_steering` arg default
+  flipped to `true` — gamepad steering was reversed relative to
+  `/steering_cmd`'s `+1=left` convention on this robot.
+- Packaging: `robot_bringup` gained a console-script entry point
+  (`run_state_node`) and `lgpio`/`std_msgs` exec_depends;
+  `obstacle_avoidance/config/params.yaml` gained
+  `autonomy_enabled_timeout_s: 1.00`.
+- **Verified end-to-end on hardware**: paused-at-boot, gamepad free-drive,
+  START → autonomous driving, PAUSE → instant stop, gamepad
+  auto-respawn/kill all confirmed working; steering direction confirmed
+  correct after the `invert_steering` fix.
+- Not yet revisited: the `error_deadzone` TODO for
+  `steering_controller_node.py` (see top of this file) — still open.
 
 ## Updated calibration procedure (manual/interactive, do this on hardware)
 
