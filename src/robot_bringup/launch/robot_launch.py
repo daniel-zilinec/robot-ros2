@@ -6,6 +6,7 @@ from launch.substitutions import LaunchConfiguration
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -23,6 +24,10 @@ def generate_launch_description():
     enable_steering_sensor = LaunchConfiguration('enable_steering_sensor')
     enable_road_follower = LaunchConfiguration('enable_road_follower')
     enable_obstacle_avoidance = LaunchConfiguration('enable_obstacle_avoidance')
+    enable_run_control = LaunchConfiguration('enable_run_control')
+    run_control_start_pin = LaunchConfiguration('run_control_start_pin')
+    run_control_pause_pin = LaunchConfiguration('run_control_pause_pin')
+    run_control_manage_gamepad = LaunchConfiguration('run_control_manage_gamepad')
     gamepad_device_path = LaunchConfiguration('gamepad_device_path')
     gamepad_axis_traction = LaunchConfiguration('gamepad_axis_traction')
     gamepad_axis_steering = LaunchConfiguration('gamepad_axis_steering')
@@ -70,6 +75,26 @@ def generate_launch_description():
             'enable_obstacle_avoidance',
             default_value='true',
             description='Start the lidar-based obstacle avoidance node.',
+        ),
+        DeclareLaunchArgument(
+            'enable_run_control',
+            default_value='true',
+            description='Start the GPIO start/pause button node gating autonomous driving.',
+        ),
+        DeclareLaunchArgument(
+            'run_control_start_pin',
+            default_value='17',
+            description='BCM GPIO pin for the START button.',
+        ),
+        DeclareLaunchArgument(
+            'run_control_pause_pin',
+            default_value='27',
+            description='BCM GPIO pin for the PAUSE button.',
+        ),
+        DeclareLaunchArgument(
+            'run_control_manage_gamepad',
+            default_value='true',
+            description='If true, PAUSE spawns/restarts gamepad.sh and START kills it.',
         ),
         DeclareLaunchArgument(
             'gamepad_device_path',
@@ -143,6 +168,7 @@ def generate_launch_description():
                 'device_path': gamepad_device_path,
                 'topic_traction': '/traction_motor_cmd',
                 'topic_steering': '/steering_cmd',
+                'invert_steering': 'true',
                 'axis_traction': gamepad_axis_traction,
                 'axis_steering': gamepad_axis_steering,
                 'deadman_button': gamepad_deadman_button,
@@ -156,6 +182,18 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(obstacle_avoidance_launch)),
             condition=IfCondition(enable_obstacle_avoidance),
+        ),
+        Node(
+            package='robot_bringup',
+            executable='run_state_node',
+            name='run_state_node',
+            output='screen',
+            parameters=[{
+                'start_pin': ParameterValue(run_control_start_pin, value_type=int),
+                'pause_pin': ParameterValue(run_control_pause_pin, value_type=int),
+                'manage_gamepad_process': ParameterValue(run_control_manage_gamepad, value_type=bool),
+            }],
+            condition=IfCondition(enable_run_control),
         ),
         Node(
             package='road_follower',

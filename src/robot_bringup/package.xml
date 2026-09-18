@@ -12,10 +12,12 @@
   <exec_depend>gamepad_teleop</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>lgpio</exec_depend>
   <exec_depend>lidar</exec_depend>
   <exec_depend>motor_driver</exec_depend>
   <exec_depend>obstacle_avoidance</exec_depend>
   <exec_depend>road_follower</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>steering_sensor</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
 

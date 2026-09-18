@@ -23,7 +23,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 from enum import Enum
 
 
@@ -62,6 +62,8 @@ class AckermannObstacleAvoider(Node):
         self.straighten_factor = self.get_parameter('straighten_factor').value
         self.road_steer_gain  = self.get_parameter('road_steer_gain').value
         self.road_error_timeout_s = self.get_parameter('road_error_timeout_s').value
+        self.declare_parameter('autonomy_enabled_timeout_s', 1.00)  # start/pause watchdog
+        self.autonomy_enabled_timeout_s = self.get_parameter('autonomy_enabled_timeout_s').value
 
         # ── State ──────────────────────────────────────────────────────
         self.state            = State.DRIVING
@@ -69,6 +71,10 @@ class AckermannObstacleAvoider(Node):
         self.state_start_time = None  # rclpy.Time when current timed state began
         self.road_error       = 0.0
         self.road_error_rx_s  = None
+        # Paused until run_state_node says otherwise (fail-safe default).
+        self.autonomy_enabled    = False
+        self.autonomy_enabled_rx_s = None
+        self._was_driving         = False
 
         # ── ROS 2 interfaces ───────────────────────────────────────────
         self.scan_sub = self.create_subscription(
@@ -80,6 +86,10 @@ class AckermannObstacleAvoider(Node):
             Float32, '/road_follower/error',
             self.road_error_callback, 10)
 
+        self.autonomy_enabled_sub = self.create_subscription(
+            Bool, '/autonomy_enabled',
+            self.autonomy_enabled_callback, 10)
+
         self.traction_pub = self.create_publisher(
             Float32, '/traction_motor_cmd', 10)
         self.steering_pub = self.create_publisher(
@@ -90,6 +100,19 @@ class AckermannObstacleAvoider(Node):
     def road_error_callback(self, msg: Float32):
         self.road_error = msg.data
         self.road_error_rx_s = self.get_clock().now().nanoseconds * 1e-9
+
+    def autonomy_enabled_callback(self, msg: Bool):
+        self.autonomy_enabled = msg.data
+        self.autonomy_enabled_rx_s = self.get_clock().now().nanoseconds * 1e-9
+
+    def is_autonomy_enabled(self):
+        """False if never received or stale — fail safe (paused) on watchdog loss."""
+        if self.autonomy_enabled_rx_s is None:
+            return False
+        age_s = self.get_clock().now().nanoseconds * 1e-9 - self.autonomy_enabled_rx_s
+        if age_s > self.autonomy_enabled_timeout_s:
+            return False
+        return self.autonomy_enabled
 
     def get_road_steer(self):
         """Road-following steering target, or 0.0 (drive straight) if stale/absent."""
@@ -143,6 +166,16 @@ class AckermannObstacleAvoider(Node):
     # ── Main callback ─────────────────────────────────────────────────────
 
     def scan_callback(self, msg: LaserScan):
+
+        # ── Start/Pause gate ────────────────────────────────────────────
+        # While paused, stay hands-off entirely (gamepad/human owns the motors).
+        if not self.is_autonomy_enabled():
+            if self._was_driving:
+                self.publish(0.0, 0.0)
+                self.get_logger().info('Autonomy disabled → stopped, standing by')
+            self._was_driving = False
+            return
+        self._was_driving = True
 
         # ── Emergency stop ─────────────────────────────────────────────
         # Stop immediately if anything in the forward cone is closer than 0.30m.
