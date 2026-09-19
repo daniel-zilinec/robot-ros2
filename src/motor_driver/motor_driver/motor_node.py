@@ -132,7 +132,7 @@ class Dri0042MotorNode(Node):
             try:
                 handle = lgpio.gpiochip_open(idx)
                 if candidate != requested_chip:
-                    self.get_logger().warn(
+                    self.get_logger().warning(
                         'Requested gpio chip %s not openable, falling back to %s.'
                         % (requested_chip, candidate)
                     )
@@ -152,7 +152,7 @@ class Dri0042MotorNode(Node):
         # Command range is normalized to [-1.0, 1.0].
         val = max(-1.0, min(1.0, float(msg.data)))
         if not math.isfinite(val):
-            self.get_logger().warn('Ignoring non-finite motor command: %s' % msg.data)
+            self.get_logger().warning('Ignoring non-finite motor command: %s' % msg.data)
             return
         self._cmd.value = val
         self._cmd.last_rx_s = self._now_s()

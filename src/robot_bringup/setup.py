@@ -25,6 +25,8 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'run_state_node = robot_bringup.run_state_node:main',
+        ],
     },
 )
