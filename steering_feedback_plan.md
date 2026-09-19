@@ -12,31 +12,10 @@ Steering signal convention throughout: normalized **-1..1** (matches existing
 
 - [x] Phase A — steering angle sensor (`steering_sensor` package, estimator node) — **calibrated and verified on hardware**
 - [x] Phase B — closed-loop steering controller (same package, controller node) — **verified on hardware: converges to +1/-1 targets and holds, recenters on watchdog timeout**
-- [x] Phase C — road+obstacle arbitration (`obstacle_avoidance` diff) — implemented, **not yet field tested**
-- [x] Wiring — `robot_bringup` launch updates — implemented, **not yet run end-to-end**
+- [x] Phase C — road+obstacle arbitration (`obstacle_avoidance` diff) — **field tested and working better than expected**
+- [x] Wiring — `robot_bringup` launch updates — **field tested and working end-to-end**
 - [ ] Phase D — stretch: remove obstacle_avoidance state machine (optional, only if time remains)
 - [x] Start/Pause GPIO control (`run_state_node`, GPIO17/27) — implemented and **verified on hardware**, see dedicated section below
-
-## TODO next session
-
-- [x] **Add an error deadzone to `steering_controller_node.py`.** — **done
-  2026-09-18**, hard deadzone: `error_deadzone` param (default 0.04) in
-  `config/params.yaml`, in `_on_timer` outputs 0 instead of
-  `motor_sign * kp * error` whenever `abs(target - measured) < error_deadzone`.
-  Not yet re-verified on hardware for hunting/dither — still tune the value
-  live if it doesn't fully stop it. Original context below.
-
-  Observed on
-  hardware: lidar noise on `/steering_angle` (~1-1.5deg raw, amplified by the
-  narrow ~13deg calibration span) causes the P controller to constantly
-  hunt/dither the steering motor back and forth trying to null out a tiny
-  error, even when the wheel is already "straight enough". Risk of motor
-  wear/overheating from constant direction reversals. Fix: add a
-  `error_deadzone` param (e.g. ~0.03-0.05 normalized) — if
-  `abs(target - measured) < error_deadzone`, output 0 instead of a small
-  correction. Tune the deadzone value on hardware (small enough to still
-  reach the road-following/avoidance targets, large enough to stop the
-  jitter).
 
 ## Phase A — Steering angle sensor
 
@@ -96,15 +75,15 @@ tested and working with time to spare.
 
 ## Verification checklist
 
-1. Phase A: echo `/steering_angle` while commanding `/steering_motor_cmd` to
+1. [x] Phase A: echo `/steering_angle` while commanding `/steering_motor_cmd` to
    full-left/center/full-right; confirm tracking, ~±1.0 at locks.
-2. Phase B: traction off, publish test `/steering_cmd` values, confirm wheel
+2. [x] Phase B: traction off, publish test `/steering_cmd` values, confirm wheel
    converges and holds.
-3. Phase C: road_follower + modified avoider on a road with grass edge, no
+3. [x] Phase C: road_follower + modified avoider on a road with grass edge, no
    obstacles, confirm centering; then introduce an obstacle.
-4. Full stack via `robot_bringup` launch; check `ros2 topic list`/
+4. [x] Full stack via `robot_bringup` launch; check `ros2 topic list`/
    `ros2 node list` for no duplicate publishers on `/steering_motor_cmd`.
-5. Reduced-speed field test in the park, gamepad deadman override ready as
+5. [x] Reduced-speed field test in the park, gamepad deadman override ready as
    kill-switch.
 
 ## Decisions
@@ -123,8 +102,9 @@ tested and working with time to spare.
   `cv2.imshow`, which needs a display (`DISPLAY` env var set), same as the
   standalone `road_follower.sh` script. If running headless, set
   `enable_road_follower:=false` or fix the node to make the imshow optional.
-- Next step: finish hardware calibration (see below), then run through the
-  verification checklist above in order (A → B → C → full stack → field test).
+- Field-tested result: Phase C and Wiring are complete and working in practice.
+  Remaining work is optional polish only (Phase D / future tuning), not a
+  blocker for competition.
 
 ## Final calibration values (2026-09-17, verified working)
 
