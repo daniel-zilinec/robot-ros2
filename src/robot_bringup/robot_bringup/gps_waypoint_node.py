@@ -92,14 +92,15 @@ class GpsWaypointNode(Node):
         self._load_osm_intersections()
         self.create_timer(1.0 / self.publish_rate_hz, self.timer_callback)
         self.get_logger().info(
-            'GPS waypoint node ready: target=(%.6f, %.6f), tolerance=%.1fm, gain=%.2f',
-            self.target_lat, self.target_lon, self.tolerance_m, self.heading_gain)
+            f'GPS waypoint node ready: target=({self.target_lat:.6f}, '
+            f'{self.target_lon:.6f}), tolerance={self.tolerance_m:.1f}m, '
+            f'gain={self.heading_gain:.2f}')
 
     def _load_osm_intersections(self):
         """Infer junctions from highway-way topology in the offline OSM map."""
         path = Path(self.osm_file)
         if not path.exists():
-            self.get_logger().warning('OSM map not found: %s', self.osm_file)
+            self.get_logger().warning(f'OSM map not found: {self.osm_file}')
             return
         try:
             with gzip.open(path, 'rb') as stream:
@@ -126,14 +127,14 @@ class GpsWaypointNode(Node):
             self.intersections = [nodes[node_id] for node_id, adjacent in neighbors.items()
                                   if len(adjacent) >= self.minimum_intersection_degree]
             self.get_logger().info(
-                'Loaded %d OSM intersections from %s', len(self.intersections), self.osm_file)
+                f'Loaded {len(self.intersections)} OSM intersections from {self.osm_file}')
         except (OSError, ET.ParseError, KeyError, ValueError) as exc:
-            self.get_logger().error('Failed to parse OSM map %s: %s', self.osm_file, exc)
+            self.get_logger().error(f'Failed to parse OSM map {self.osm_file}: {exc}')
 
     def _read_target_file_if_present(self):
         p = Path(self.target_file)
         if not p.exists():
-            self.get_logger().warning('Target file not found: %s', self.target_file)
+            self.get_logger().warning(f'Target file not found: {self.target_file}')
             return
         try:
             lines = [line.strip() for line in p.read_text().splitlines() if line.strip()]
@@ -145,10 +146,12 @@ class GpsWaypointNode(Node):
                     self.target_lat = float(parts[0])
                     self.target_lon = float(parts[1])
                     self.target_loaded = True
-                    self.get_logger().info('Loaded target from %s: %.6f, %.6f', self.target_file, self.target_lat, self.target_lon)
+                    self.get_logger().info(
+                        f'Loaded target from {self.target_file}: '
+                        f'{self.target_lat:.6f}, {self.target_lon:.6f}')
                     return
         except Exception as exc:  # pragma: no cover
-            self.get_logger().error('Failed to parse target file %s: %s', self.target_file, exc)
+            self.get_logger().error(f'Failed to parse target file {self.target_file}: {exc}')
 
     def _wrap_pi(self, angle: float) -> float:
         while angle > math.pi:
@@ -231,10 +234,10 @@ class GpsWaypointNode(Node):
         heading_error = self._wrap_pi(target_bearing - heading)
         self.heading_error_pub.publish(Float32(data=float(heading_error)))
         if at_intersection != self.was_at_intersection:
+            gate_state = 'ACTIVE' if at_intersection else 'inactive'
             self.get_logger().info(
-                'OSM intersection gate: %s (distance=%.1fm)',
-                'ACTIVE' if at_intersection else 'inactive',
-                distance_to_intersection)
+                f'OSM intersection gate: {gate_state} '
+                f'(distance={distance_to_intersection:.1f}m)')
             self.was_at_intersection = at_intersection
 
         steering_bias = math.tanh(heading_error / (math.radians(30.0)))
@@ -254,7 +257,7 @@ class GpsWaypointNode(Node):
             self.steering_pub.publish(msg)
 
         if distance < self.tolerance_m:
-            self.get_logger().info('Target reached: distance=%.2fm', distance)
+            self.get_logger().info(f'Target reached: distance={distance:.2f}m')
 
 
 def main(args=None):
