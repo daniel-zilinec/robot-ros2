@@ -52,6 +52,8 @@ class AckermannObstacleAvoider(Node):
         # straighten_factor < 1.0 because motor doesn't stop instantly
         self.declare_parameter('road_steer_gain',     1.00)  # scales road_follower error into steering cmd
         self.declare_parameter('road_error_timeout_s', 1.00)  # treat stale road error as 0 (drive straight)
+        self.declare_parameter('gps_steer_gain',       0.35)  # OSM-gated GPS correction in DRIVING
+        self.declare_parameter('gps_bias_timeout_s',   1.00)
         self.declare_parameter('enable_debug_image',  True)  # publish bird's-eye lidar view for Foxglove
         self.declare_parameter('debug_image_size_px', 500)   # square canvas side length
         self.declare_parameter('debug_image_max_range_m', 3.0)  # canvas edge = this many meters
@@ -67,6 +69,8 @@ class AckermannObstacleAvoider(Node):
         self.straighten_factor = self.get_parameter('straighten_factor').value
         self.road_steer_gain  = self.get_parameter('road_steer_gain').value
         self.road_error_timeout_s = self.get_parameter('road_error_timeout_s').value
+        self.gps_steer_gain = self.get_parameter('gps_steer_gain').value
+        self.gps_bias_timeout_s = self.get_parameter('gps_bias_timeout_s').value
         self.enable_debug_image = self.get_parameter('enable_debug_image').value
         self.debug_image_size_px = self.get_parameter('debug_image_size_px').value
         self.debug_image_max_range_m = self.get_parameter('debug_image_max_range_m').value
@@ -79,6 +83,8 @@ class AckermannObstacleAvoider(Node):
         self.state_start_time = None  # rclpy.Time when current timed state began
         self.road_error       = 0.0
         self.road_error_rx_s  = None
+        self.gps_bias = 0.0
+        self.gps_bias_rx_s = None
         # Paused until run_state_node says otherwise (fail-safe default).
         self.autonomy_enabled    = False
         self.autonomy_enabled_rx_s = None
@@ -93,6 +99,10 @@ class AckermannObstacleAvoider(Node):
         self.road_error_sub = self.create_subscription(
             Float32, '/road_follower/error',
             self.road_error_callback, 10)
+
+        self.gps_bias_sub = self.create_subscription(
+            Float32, '/gps_steering_bias',
+            self.gps_bias_callback, 10)
 
         self.autonomy_enabled_sub = self.create_subscription(
             Bool, '/autonomy_enabled',
@@ -115,6 +125,10 @@ class AckermannObstacleAvoider(Node):
         self.autonomy_enabled = msg.data
         self.autonomy_enabled_rx_s = self.get_clock().now().nanoseconds * 1e-9
 
+    def gps_bias_callback(self, msg: Float32):
+        self.gps_bias = max(-1.0, min(1.0, float(msg.data)))
+        self.gps_bias_rx_s = self.get_clock().now().nanoseconds * 1e-9
+
     def is_autonomy_enabled(self):
         """False if never received or stale — fail safe (paused) on watchdog loss."""
         if self.autonomy_enabled_rx_s is None:
@@ -132,6 +146,15 @@ class AckermannObstacleAvoider(Node):
         if age_s > self.road_error_timeout_s:
             return 0.0
         return max(-1.0, min(1.0, self.road_error * self.road_steer_gain))
+
+    def get_driving_steer(self):
+        road_steer = self.get_road_steer()
+        if self.gps_bias_rx_s is None:
+            return road_steer
+        age_s = self.get_clock().now().nanoseconds * 1e-9 - self.gps_bias_rx_s
+        if age_s > self.gps_bias_timeout_s:
+            return road_steer
+        return max(-1.0, min(1.0, road_steer + self.gps_bias * self.gps_steer_gain))
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -313,7 +336,7 @@ class AckermannObstacleAvoider(Node):
                     f'turning {"LEFT" if self.steer_direction > 0 else "RIGHT"}')
                 self.set_state(State.AVOIDING)
             else:
-                self.publish(self.forward_power, self.get_road_steer())
+                self.publish(self.forward_power, self.get_driving_steer())
 
         elif self.state == State.AVOIDING:
             if self.elapsed(msg) >= self.avoid_duration:
@@ -331,7 +354,7 @@ class AckermannObstacleAvoider(Node):
                 if front_min >= self.resume_distance:
                     self.get_logger().info('Straightened + path clear → DRIVING')
                     self.set_state(State.DRIVING)
-                    self.publish(self.forward_power, self.get_road_steer())
+                    self.publish(self.forward_power, self.get_driving_steer())
                 else:
                     # Path still blocked — avoid again (same direction)
                     self.get_logger().warning(

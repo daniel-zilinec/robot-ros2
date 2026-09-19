@@ -4,6 +4,10 @@
 Publishes:
   - /heading  (std_msgs/Float32, radians, robot heading estimate from /vel)
   - /gps_steering_bias (std_msgs/Float32, normalized -1..1, waypoint heading bias)
+    - /gps_osm/intersection_active (std_msgs/Bool)
+    - /gps_osm/intersection_distance_m (std_msgs/Float32)
+    - /gps_osm/heading_error (std_msgs/Float32, radians)
+    - /gps_osm/target_distance_m (std_msgs/Float32)
 
 Reads:
   - /fix       (sensor_msgs/NavSatFix)
@@ -16,13 +20,15 @@ It is meant to be blended upstream or used as a bias source during testing.
 """
 
 import math
+import gzip
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import rclpy
 from geometry_msgs.msg import TwistStamped
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Float32
+from std_msgs.msg import Bool, Float32
 
 
 class GpsWaypointNode(Node):
@@ -38,6 +44,9 @@ class GpsWaypointNode(Node):
         self.declare_parameter('heading_gain', 1.0)
         self.declare_parameter('max_bias', 1.0)
         self.declare_parameter('publish_to_steering_cmd', False)
+        self.declare_parameter('osm_file', '/home/dano/robot-ros2/stromovka.2026.trimmed.osm.gz')
+        self.declare_parameter('intersection_radius_m', 8.0)
+        self.declare_parameter('minimum_intersection_degree', 3)
 
         self.target_file = str(self.get_parameter('target_file').value)
         self.target_lat = float(self.get_parameter('target_lat').value)
@@ -48,6 +57,9 @@ class GpsWaypointNode(Node):
         self.heading_gain = float(self.get_parameter('heading_gain').value)
         self.max_bias = float(self.get_parameter('max_bias').value)
         self.publish_to_steering_cmd = bool(self.get_parameter('publish_to_steering_cmd').value)
+        self.osm_file = str(self.get_parameter('osm_file').value)
+        self.intersection_radius_m = float(self.get_parameter('intersection_radius_m').value)
+        self.minimum_intersection_degree = int(self.get_parameter('minimum_intersection_degree').value)
 
         self.fix_msg = None
         self.vel_msg = None
@@ -56,21 +68,67 @@ class GpsWaypointNode(Node):
         self.target_loaded = False
         self.origin_lat = None
         self.origin_lon = None
+        self.intersections = []
+        self.was_at_intersection = False
 
         self.fix_sub = self.create_subscription(NavSatFix, '/fix', self.fix_callback, 10)
         self.vel_sub = self.create_subscription(TwistStamped, '/vel', self.vel_callback, 10)
         self.heading_pub = self.create_publisher(Float32, '/heading', 10)
         self.bias_pub = self.create_publisher(Float32, '/gps_steering_bias', 10)
+        self.intersection_active_pub = self.create_publisher(
+            Bool, '/gps_osm/intersection_active', 10)
+        self.intersection_distance_pub = self.create_publisher(
+            Float32, '/gps_osm/intersection_distance_m', 10)
+        self.heading_error_pub = self.create_publisher(
+            Float32, '/gps_osm/heading_error', 10)
+        self.target_distance_pub = self.create_publisher(
+            Float32, '/gps_osm/target_distance_m', 10)
         if self.publish_to_steering_cmd:
             self.steering_pub = self.create_publisher(Float32, '/steering_cmd', 10)
         else:
             self.steering_pub = None
 
         self._read_target_file_if_present()
+        self._load_osm_intersections()
         self.create_timer(1.0 / self.publish_rate_hz, self.timer_callback)
         self.get_logger().info(
             'GPS waypoint node ready: target=(%.6f, %.6f), tolerance=%.1fm, gain=%.2f',
             self.target_lat, self.target_lon, self.tolerance_m, self.heading_gain)
+
+    def _load_osm_intersections(self):
+        """Infer junctions from highway-way topology in the offline OSM map."""
+        path = Path(self.osm_file)
+        if not path.exists():
+            self.get_logger().warning('OSM map not found: %s', self.osm_file)
+            return
+        try:
+            with gzip.open(path, 'rb') as stream:
+                root = ET.parse(stream).getroot()
+            nodes = {
+                element.attrib['id']: (
+                    float(element.attrib['lat']),
+                    float(element.attrib['lon']))
+                for element in root.findall('node')
+            }
+            neighbors = {}
+            for way in root.findall('way'):
+                tags = {tag.attrib.get('k'): tag.attrib.get('v')
+                        for tag in way.findall('tag')}
+                if tags.get('highway') in ('steps', 'elevator'):
+                    continue
+                if 'highway' not in tags:
+                    continue
+                refs = [nd.attrib['ref'] for nd in way.findall('nd')]
+                for first, second in zip(refs, refs[1:]):
+                    if first in nodes and second in nodes:
+                        neighbors.setdefault(first, set()).add(second)
+                        neighbors.setdefault(second, set()).add(first)
+            self.intersections = [nodes[node_id] for node_id, adjacent in neighbors.items()
+                                  if len(adjacent) >= self.minimum_intersection_degree]
+            self.get_logger().info(
+                'Loaded %d OSM intersections from %s', len(self.intersections), self.osm_file)
+        except (OSError, ET.ParseError, KeyError, ValueError) as exc:
+            self.get_logger().error('Failed to parse OSM map %s: %s', self.osm_file, exc)
 
     def _read_target_file_if_present(self):
         p = Path(self.target_file)
@@ -136,6 +194,13 @@ class GpsWaypointNode(Node):
         tx, ty = self._enu_xy(self.target_lat, self.target_lon, self.origin_lat, self.origin_lon)
         return math.hypot(tx - dx, ty - dy)
 
+    def _distance_to_nearest_intersection_m(self, robot_lat: float, robot_lon: float):
+        if not self.intersections:
+            return float('inf')
+        return min(
+            math.hypot(*self._enu_xy(lat, lon, robot_lat, robot_lon))
+            for lat, lon in self.intersections)
+
     def timer_callback(self):
         if self.fix_msg is None:
             return
@@ -146,14 +211,35 @@ class GpsWaypointNode(Node):
         robot_lon = float(self.fix_msg.longitude)
         tx, ty = self._enu_xy(self.target_lat, self.target_lon, self.origin_lat, self.origin_lon)
         dx, dy = self._enu_xy(robot_lat, robot_lon, self.origin_lat, self.origin_lon)
+        distance = math.hypot(tx - dx, ty - dy)
+        distance_to_intersection = self._distance_to_nearest_intersection_m(
+            robot_lat, robot_lon)
+        at_intersection = distance_to_intersection <= self.intersection_radius_m
+
+        self.intersection_active_pub.publish(Bool(data=at_intersection))
+        self.intersection_distance_pub.publish(
+            Float32(data=float(distance_to_intersection)))
+        self.target_distance_pub.publish(Float32(data=float(distance)))
 
         target_bearing = math.atan2(tx - dx, ty - dy)
         heading = self._estimate_heading()
         if heading is None:
+            self.heading_error_pub.publish(Float32(data=0.0))
+            self.bias_pub.publish(Float32(data=0.0))
             return
 
         heading_error = self._wrap_pi(target_bearing - heading)
+        self.heading_error_pub.publish(Float32(data=float(heading_error)))
+        if at_intersection != self.was_at_intersection:
+            self.get_logger().info(
+                'OSM intersection gate: %s (distance=%.1fm)',
+                'ACTIVE' if at_intersection else 'inactive',
+                distance_to_intersection)
+            self.was_at_intersection = at_intersection
+
         steering_bias = math.tanh(heading_error / (math.radians(30.0)))
+        if not at_intersection:
+            steering_bias = 0.0
         steering_bias = max(-self.max_bias, min(self.max_bias, self.heading_gain * steering_bias))
 
         msg = Float32()
@@ -167,7 +253,6 @@ class GpsWaypointNode(Node):
         if self.steering_pub is not None:
             self.steering_pub.publish(msg)
 
-        distance = math.hypot(tx - dx, ty - dy)
         if distance < self.tolerance_m:
             self.get_logger().info('Target reached: distance=%.2fm', distance)
 
