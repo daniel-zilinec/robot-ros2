@@ -24,7 +24,7 @@ def generate_launch_description():
         DeclareLaunchArgument('topic_traction', default_value='/traction_motor_cmd'),
         DeclareLaunchArgument('topic_steering', default_value='/steering_motor_cmd'),
         DeclareLaunchArgument('axis_traction', default_value='1'),
-        DeclareLaunchArgument('axis_steering', default_value='0'),
+        DeclareLaunchArgument('axis_steering', default_value='2'),
         DeclareLaunchArgument('invert_traction', default_value='true'),
         DeclareLaunchArgument('invert_steering', default_value='false'),
         DeclareLaunchArgument('max_traction', default_value='0.4'),
