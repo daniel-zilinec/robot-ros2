@@ -25,6 +25,7 @@ def generate_launch_description():
     enable_road_follower = LaunchConfiguration('enable_road_follower')
     enable_obstacle_avoidance = LaunchConfiguration('enable_obstacle_avoidance')
     enable_run_control = LaunchConfiguration('enable_run_control')
+    enable_gps_waypoint = LaunchConfiguration('enable_gps_waypoint')
     run_control_start_pin = LaunchConfiguration('run_control_start_pin')
     run_control_pause_pin = LaunchConfiguration('run_control_pause_pin')
     run_control_manage_gamepad = LaunchConfiguration('run_control_manage_gamepad')
@@ -80,6 +81,11 @@ def generate_launch_description():
             'enable_run_control',
             default_value='true',
             description='Start the GPIO start/pause button node gating autonomous driving.',
+        ),
+        DeclareLaunchArgument(
+            'enable_gps_waypoint',
+            default_value='true',
+            description='Start the GPS waypoint steering bias node.',
         ),
         DeclareLaunchArgument(
             'run_control_start_pin',
@@ -193,6 +199,23 @@ def generate_launch_description():
                 'manage_gamepad_process': ParameterValue(run_control_manage_gamepad, value_type=bool),
             }],
             condition=IfCondition(enable_run_control),
+        ),
+        Node(
+            package='robot_bringup',
+            executable='gps_waypoint_node',
+            name='gps_waypoint_node',
+            output='screen',
+            parameters=[{
+                'target_file': '/home/dano/robot-ros2/gps_target.txt',
+                'target_lat': 50.105009,
+                'target_lon': 14.426937,
+                'publish_rate_hz': 10.0,
+                'speed_threshold_mps': 0.25,
+                'heading_gain': 1.0,
+                'max_bias': 1.0,
+                'publish_to_steering_cmd': False,
+            }],
+            condition=IfCondition(enable_gps_waypoint),
         ),
         Node(
             package='road_follower',

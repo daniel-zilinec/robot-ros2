@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'run_state_node = robot_bringup.run_state_node:main',
+            'gps_waypoint_node = robot_bringup.gps_waypoint_node:main',
         ],
     },
 )
