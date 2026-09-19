@@ -42,7 +42,7 @@ class AckermannObstacleAvoider(Node):
 
         # ── Parameters ────────────────────────────────────────────────
         self.declare_parameter('forward_power',       0.40)  # cruise power (0–1)
-        self.declare_parameter('avoid_power',         0.30)  # power during avoid/straighten
+        self.declare_parameter('avoid_power',         0.40)  # power during avoid/straighten
         self.declare_parameter('steer_power',         1.00)  # full lock during avoid
         self.declare_parameter('front_half_angle',   45.0)   # degrees each side of fwd
         self.declare_parameter('stop_distance',       1.00)  # m — trigger avoidance
@@ -55,6 +55,10 @@ class AckermannObstacleAvoider(Node):
         self.declare_parameter('enable_debug_image',  True)  # publish bird's-eye lidar view for Foxglove
         self.declare_parameter('debug_image_size_px', 500)   # square canvas side length
         self.declare_parameter('debug_image_max_range_m', 3.0)  # canvas edge = this many meters
+        # Noise filtering — reject stray single-beam hits (e.g. leaves/stones at low height)
+        self.declare_parameter('min_cluster_points',      4)     # min adjacent beams to count as a real obstacle
+        self.declare_parameter('cluster_range_tolerance_m', 0.15)  # max range gap between adjacent beams in a cluster
+        self.declare_parameter('obstacle_confirm_frames',  3)     # consecutive scans required before triggering avoidance
 
         self.forward_power    = self.get_parameter('forward_power').value
         self.avoid_power      = self.get_parameter('avoid_power').value
@@ -72,6 +76,9 @@ class AckermannObstacleAvoider(Node):
         self.debug_image_max_range_m = self.get_parameter('debug_image_max_range_m').value
         self.declare_parameter('autonomy_enabled_timeout_s', 1.00)  # start/pause watchdog
         self.autonomy_enabled_timeout_s = self.get_parameter('autonomy_enabled_timeout_s').value
+        self.min_cluster_points = self.get_parameter('min_cluster_points').value
+        self.cluster_range_tolerance_m = self.get_parameter('cluster_range_tolerance_m').value
+        self.obstacle_confirm_frames = self.get_parameter('obstacle_confirm_frames').value
 
         # ── State ──────────────────────────────────────────────────────
         self.state            = State.DRIVING
@@ -83,6 +90,7 @@ class AckermannObstacleAvoider(Node):
         self.autonomy_enabled    = False
         self.autonomy_enabled_rx_s = None
         self._was_driving         = False
+        self._obstacle_streak     = 0  # consecutive scans with front_min < stop_distance
 
         # ── ROS 2 interfaces ───────────────────────────────────────────
         self.scan_sub = self.create_subscription(
@@ -135,16 +143,48 @@ class AckermannObstacleAvoider(Node):
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
-    def get_sector_min(self, msg, angle_start_rad, angle_end_rad):
+    def compute_valid_mask(self, ranges):
         """
-        Minimum valid range in an angular sector.
-        Applies the same correction as the static TF transform:
+        Reject isolated single/few-beam hits (typical of stray reflections off
+        leaves/stones near the ground) by requiring a minimum run of adjacent
+        beams whose ranges agree within cluster_range_tolerance_m. Returns a
+        list of bools, True where the reading is part of a large-enough cluster.
+        """
+        n = len(ranges)
+        valid = [False] * n
+        i = 0
+        while i < n:
+            r = ranges[i]
+            if not (math.isfinite(r) and r > 0.05):
+                i += 1
+                continue
+            j = i
+            while j + 1 < n:
+                rn = ranges[j + 1]
+                if math.isfinite(rn) and rn > 0.05 and \
+                        abs(rn - ranges[j]) < self.cluster_range_tolerance_m:
+                    j += 1
+                else:
+                    break
+            if (j - i + 1) >= self.min_cluster_points:
+                for k in range(i, j + 1):
+                    valid[k] = True
+            i = j + 1
+        return valid
+
+    def get_sector_min(self, msg, angle_start_rad, angle_end_rad, valid_mask):
+        """
+        Minimum valid range in an angular sector, ignoring beams the noise
+        filter marked invalid. Applies the same correction as the static TF
+        transform:
         - 180 deg yaw  (lidar mounted backwards)
         - 180 deg roll (lidar mounted upside down)
         Combined effect on scan angles: corrected = -raw + pi
         """
         ranges = []
         for i, r in enumerate(msg.ranges):
+            if not valid_mask[i]:
+                continue
             raw_angle = msg.angle_min + i * msg.angle_increment
             # Apply same correction as TF: negate + shift 180°
             corrected_angle = -raw_angle + math.pi
@@ -268,14 +308,21 @@ class AckermannObstacleAvoider(Node):
                 self.publish(0.0, 0.0)
                 self.get_logger().info('Autonomy disabled → stopped, standing by')
             self._was_driving = False
+            self._obstacle_streak = 0
             return
         self._was_driving = True
+
+        # ── Noise filtering ─────────────────────────────────────────────
+        # Reject stray single/few-beam hits before any distance is computed.
+        valid_mask = self.compute_valid_mask(msg.ranges)
 
         # ── Emergency stop ─────────────────────────────────────────────
         # Stop immediately if anything in the forward cone is closer than 0.30m.
         # Uses corrected angles — so car body (behind the sensor) is excluded.
         forward_close = []
         for i, r in enumerate(msg.ranges):
+            if not valid_mask[i]:
+                continue
             if not (math.isfinite(r) and r > 0.05):
                 continue
             raw_angle = msg.angle_min + i * msg.angle_increment
@@ -291,21 +338,23 @@ class AckermannObstacleAvoider(Node):
             self.get_logger().error(f'EMERGENCY STOP — {forward_min:.2f}m')
             return
 
-    # ── Scan analysis ──────────────────────────────────────────────
-
-
         # ── Scan analysis ──────────────────────────────────────────────
         front_min = self.get_sector_min(
-            msg, -self.front_half_angle, self.front_half_angle)
+            msg, -self.front_half_angle, self.front_half_angle, valid_mask)
         left_min  = self.get_sector_min(
-            msg, 0.0, self.front_half_angle)
+            msg, 0.0, self.front_half_angle, valid_mask)
         right_min = self.get_sector_min(
-            msg, -self.front_half_angle, 0.0)
+            msg, -self.front_half_angle, 0.0, valid_mask)
 
         # ── State machine ──────────────────────────────────────────────
 
         if self.state == State.DRIVING:
             if front_min < self.stop_distance:
+                self._obstacle_streak += 1
+            else:
+                self._obstacle_streak = 0
+
+            if self._obstacle_streak >= self.obstacle_confirm_frames:
                 # Lock steering toward the clearer side
                 self.steer_direction = -1.0 if left_min >= right_min else 1.0
                 self.get_logger().info(
